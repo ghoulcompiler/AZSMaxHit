@@ -19,9 +19,6 @@ Damage meters tell you which ability did the most damage overall. AZS Max Hit te
 - **A row per ability** (spells, melee, pets and procs) with its total, biggest normal hit, biggest crit, run time of its top hit, burst, average hit, hit count and crit rate. Click a column header to sort by it.
 - **Pets and summons** get their own rows, e.g. `Water Elemental: Waterbolt`.
 - **Procs under their ability:** item and talent procs (Pendant of the Plague, Shadowy Apparitions, Shadowform, ...) appear indented under the ability that triggers them, with their total from the game's meter. The game doesn't report single proc hits, so their other columns show a dim *-*.
-
-  <img src="images/procs.png" alt="Procs under their ability: Shadowy Apparitions under Mind Blast, Shadowform under Corpse Explosion, Pendant of the Plague under Devouring Plague" width="600">
-
 - **Party view in co-op:** a Party tab compares every hero side by side: top ability, its DPS, DPS, total and share, straight from the game's party meter. See [Co-op](#co-op).
 - **Icons** from your spellbook, talents and the game's own meter.
 - **Fresh every run:** the window clears by itself when a new run starts. Nothing from past runs is kept.
