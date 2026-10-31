@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: AZS Max Hit
-## Notes: Biggest hit, biggest crit, burst and total per spell for the current run, plus a Party view in co-op. /maxhit
+## Notes: Biggest hit, biggest crit, burst and total per ability for the current run, plus a Party view in co-op. /maxhit
 ## Author: GhoulCompiler
-## Version: 1.0.0
+## Version: 1.1.0
 ## SavedVariables: AZSMaxHitDB
 ## OptionalDeps: AZSSpellMeter
 

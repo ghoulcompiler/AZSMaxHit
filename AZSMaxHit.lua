@@ -25,6 +25,13 @@ local selected = ME -- open tab: ME (your spells) or PARTY (everyone, from the g
 -- { name, dmg, dps, top, topdps, share, class }. Partners' hits are not parsed:
 -- the game doesn't send them to your combat log.
 local party = {}
+-- Proc lines from the game's own meter (proc=1), read every half second:
+-- { name, dmg }. The combat log reports these hits under the spell that
+-- triggered them, so they are shown indented under that spell.
+local meterProcs = {}
+-- Each proc's meter total at the last reset. Only damage after that counts, so
+-- a reset (or a new run whose meter hasn't cleared yet) doesn't show old procs.
+local procBase = {}
 local sortKey = "best"
 local offset = 0
 local dirty = true
@@ -148,6 +155,9 @@ local FALLBACK_ICONS = {
 	["Treant"] = ICON_DIR .. "Ability_Druid_ForceofNature",
 	-- Survivors upgrades that are not in the spellbook or talent tree.
 	["Corpse Explosion"] = ICON_DIR .. "Spell_Shadow_CorpseExplode",
+	["Shadowy Apparitions"] = ICON_DIR .. "Spell_Shadow_Haunting",
+	["Shadowform"] = ICON_DIR .. "Spell_Shadow_Shadowform",
+	["Shadow Weaving"] = ICON_DIR .. "Spell_Shadow_BlackPlague",
 }
 
 local function asTexture(tex)
@@ -457,6 +467,12 @@ local function ingest(msg, kind, evt)
 end
 
 local function resetRun(quiet)
+	procBase = {}
+	local i
+	for i = 1, table.getn(meterProcs) do
+		procBase[meterProcs[i].name] = meterProcs[i].raw
+	end
+	meterProcs = {}
 	db.run = { players = {} }
 	run = runBook(ME)
 	resetWindows()
@@ -482,14 +498,14 @@ local function critPctOf(r)
 end
 
 local COLS = {
-	{ key = "hit",   label = "Hit",   right = 200, width = 54, value = function(r) return r.maxHit or 0 end },
-	{ key = "crit",  label = "Crit",  right = 256, width = 54, value = function(r) return r.maxCrit or 0 end },
-	{ key = "at",    label = "At",    right = 298, width = 40, value = function(r) return r.at or 999999 end, asc = true,
+	{ key = "total", label = "Total", right = 212, width = 68, value = function(r) return r.total or 0 end },
+	{ key = "hit",   label = "Hit",   right = 268, width = 54, value = function(r) return r.maxHit or 0 end, bright = true },
+	{ key = "crit",  label = "Crit",  right = 324, width = 54, value = function(r) return r.maxCrit or 0 end, bright = true },
+	{ key = "at",    label = "At",    right = 366, width = 40, value = function(r) return r.at or 999999 end, asc = true,
 		text = function(r) return fmtTime(r.at) end },
-	{ key = "burst", label = "Burst", right = 358, width = 58, value = function(r) return r.burst or 0 end },
-	{ key = "total", label = "Total", right = 428, width = 66, value = function(r) return r.total or 0 end },
-	{ key = "avg",   label = "Avg",   right = 474, width = 44, value = avgOf },
-	{ key = "hits",  label = "Hits",  right = 512, width = 36, value = function(r) return r.hits or 0 end },
+	{ key = "burst", label = "Burst", right = 426, width = 58, value = function(r) return r.burst or 0 end },
+	{ key = "avg",   label = "Avg",   right = 472, width = 44, value = avgOf },
+	{ key = "hits",  label = "Hits",  right = 510, width = 36, value = function(r) return r.hits or 0 end },
 	{ key = "critp", label = "Crit%", right = 544, width = 30, value = critPctOf,
 		text = function(r)
 			if (r.hits or 0) == 0 then return "-" end
@@ -497,6 +513,15 @@ local COLS = {
 		end },
 }
 local BEST = { key = "best", value = function(r) return r.max or 0 end }
+-- Where Hit and Crit sit, for highlighting the bigger one.
+local HIT_I, CRIT_I
+do
+	local i
+	for i = 1, table.getn(COLS) do
+		if COLS[i].key == "hit" then HIT_I = i end
+		if COLS[i].key == "crit" then CRIT_I = i end
+	end
+end
 
 local function columnByKey(key)
 	local i
@@ -523,6 +548,131 @@ local function inParty()
 	return false
 end
 
+-- Procs whose hits the combat log prints under another spell's name.
+-- Items need no entry: "Pendant of the Plague: Shadow Word: Pain" names its spell.
+local PROC_PARENT = {
+	-- Built from the talent tooltips (game 0.130-0.132): talents that cast one
+	-- named spell. The game's meter names the damage after the talent, while the
+	-- combat log prints the spell. Talents that copy several spells (Windfury,
+	-- "any spell strikes twice") get a row of their own instead.
+	-- If the combat log uses the talent's own name, that row is used as is.
+
+	-- Priest
+	["Shadowy Apparitions"] = "Mind Blast",      -- "a free Mind Blast"
+	["Shadowform"] = "Corpse Explosion",         -- the burst; seen in game as Corpse Explosion
+	["Radiance"] = "Holy Nova",                  -- "A Holy Nova bursts from you on its own"
+	["Chastise"] = "Holy Nova",                  -- "sets off a free Holy Nova"
+	-- Mage
+	["Arcane Concentration"] = "Arcane Explosion", -- "a free Arcane Explosion"
+	["Presence of Mind"] = "Arcane Missiles",
+	["Hot Streak"] = "Pyroblast",                -- "casts a free Pyroblast"
+	["Pyroclasm"] = "Blast Wave",                -- its explosion is logged as Blast Wave
+	["Splitting Ice"] = "Frostbolt",
+	-- Warlock
+	["Nightfall"] = "Shadow Bolt",               -- "fire a free Shadow Bolt"
+	["Shadow Cleave"] = "Shadow Bolt",
+	["Legion Gate"] = "Death Coil",              -- "kills trigger a Death Coil"
+	["Rain of Chaos"] = "Rain of Fire",          -- "A second Rain of Fire falls"
+	["Corpse Explosion"] = "Seed of Corruption",
+	-- Hunter
+	["Frenzy"] = "Multi-Shot",                   -- "a free Multi-Shot"
+	["Rapid Fire"] = "Aimed Shot",               -- "a free Aimed Shot"
+	["Kill Shot"] = "Aimed Shot",
+	["Piercing Shots"] = "Auto Shot",
+	["Counterattack"] = "Explosive Trap",        -- "a free Explosive Trap"
+	["Wyvern Sting"] = "Explosive Trap",
+	-- Paladin
+	["Divine Favor"] = "Holy Shock",
+	["Daybreak"] = "Holy Wrath",                 -- "a free Holy Wrath"
+	["Light's Grace"] = "Holy Wrath",
+	["Hallowed Ground"] = "Consecration",        -- "a free Consecration"
+	["Divine Intervention"] = "Consecration",
+	["Seal of Command"] = "Judgement",
+	["The Art of War"] = "Exorcism",             -- "a free Exorcism"
+	["Divine Storm"] = "Exorcism",
+	["Righteous Hammer"] = "Hammer of Wrath",
+	-- Warrior
+	["Rampage"] = "Whirlwind",                   -- "a free Whirlwind"
+	["Bladestorm"] = "Whirlwind",
+	["Mortal Wounds"] = "Mortal Strike",
+	["Last Stand"] = "Shield Slam",              -- "a free Shield Slam"
+	["Shockwave"] = "Shield Slam",
+	-- Shaman
+	["Elemental Mastery"] = "Chain Lightning",   -- "a second Chain Lightning"
+	["Maelstrom Weapon"] = "Chain Lightning",    -- "a free Chain Lightning"
+	-- Druid
+	["Omen of Clarity"] = "Starfire",            -- "a free Starfire"
+	["Starfall"] = "Starfire",
+	["Enrage"] = "Swipe",                        -- "a free Swipe"
+	["Dire Bear Form"] = "Swipe",
+	["Nature's Grasp"] = "Entangling Roots",
+	-- Rogue
+	["Riposte"] = "Ghostly Strike",              -- "a free Ghostly Strike"
+	["Killing Spree"] = "Sinister Strike",       -- "a free Sinister Strike"
+	["Preparation"] = "Gouge",                   -- "A free Gouge"
+}
+
+-- Where a meter proc line goes: "skip" (the log already has a row by that
+-- name), "child" plus the parent spell, or "alone" (a row of its own).
+-- Also returns the label to show: an item proc shows just the item's name.
+local function procPlace(p, book)
+	if book.spells[p.name] then
+		return "skip"
+	end
+	local parent, label = PROC_PARENT[p.name], p.name
+	if not parent then
+		local _, _, item, spell = string.find(p.name, "^(.-): (.+)$")
+		if item then
+			parent, label = spell, item
+		end
+	end
+	if parent and book.spells[parent] then
+		return "child", parent, label
+	end
+	return "alone", nil, p.name
+end
+
+-- Puts each spell's procs right after it, biggest first.
+function AZSMaxHit_ExpandProcs(list, book)
+	local kids = {}
+	local i
+	for i = 1, table.getn(meterProcs) do
+		local p = meterProcs[i]
+		local where, parent, label = "skip"
+		if p.dmg > 0 then
+			where, parent, label = procPlace(p, book)
+		end
+		if where == "child" then
+			kids[parent] = kids[parent] or {}
+			table.insert(kids[parent], { name = p.name, label = label, dmg = p.dmg, child = true,
+
+				parent = parent, parentTotal = book.spells[parent].total })
+		end
+	end
+	local grand = 0
+	local spell, r
+	for spell, r in pairs(book.spells) do
+		grand = grand + (r.total or 0)
+	end
+	local out = {}
+	for i = 1, table.getn(list) do
+		local item = list[i]
+		if item.procOnly then
+			item.grand = grand
+		end
+		table.insert(out, item)
+		local k = kids[item.name]
+		if k then
+			table.sort(k, function(a, b) return a.dmg > b.dmg end)
+			local j
+			for j = 1, table.getn(k) do
+				table.insert(out, k[j])
+			end
+		end
+	end
+	return out
+end
+
 local function sorted()
 	local book = currentBook()
 	local col = columnByKey(sortKey)
@@ -530,6 +680,16 @@ local function sorted()
 	local spell, r
 	for spell, r in pairs(book.spells) do
 		table.insert(list, { name = spell, r = r, v = col.value(r), m = r.max or 0 })
+	end
+	if selected == ME and next(book.spells) then
+		local i
+		for i = 1, table.getn(meterProcs) do
+			local p = meterProcs[i]
+			if p.dmg > 0 and procPlace(p, book) == "alone" then
+				local pr = { total = p.dmg }
+				table.insert(list, { name = p.name, r = pr, v = col.value(pr), m = 0, procOnly = true })
+			end
+		end
 	end
 	table.sort(list, function(a, b)
 		if a.v ~= b.v then
@@ -622,7 +782,7 @@ end
 
 -- left / right edges and justification of each party column
 local PCOLS = {
-	{ label = "Top spell", left = 150, width = 150, justify = "LEFT" },
+	{ label = "Top ability", left = 150, width = 150, justify = "LEFT" },
 	{ label = "Top DPS",   right = 350, width = 56 },
 	{ label = "DPS",       right = 420, width = 60 },
 	{ label = "Total",     right = 492, width = 66 },
@@ -739,6 +899,8 @@ function AZSMaxHit_RefreshParty()
 		local row = rows[i]
 		local h = i <= visibleRows and party[i + offset]
 		if h then
+			AZSMaxHit_Indent(row, 0)
+			row.icon:SetAlpha(1)
 			row.name:SetText(h.name == me and (h.name .. " |cff777777(you)|r") or h.name)
 			row.name:SetTextColor(classColor(h.class))
 			local coord = h.class and CLASS_ICON[string.lower(h.class)]
@@ -773,6 +935,61 @@ function AZSMaxHit_RefreshParty()
 		emptyText:Hide()
 	end
 	paintScroll(n)
+end
+
+-- Shifts a row's icon and name right by `indent` pixels (0 = normal row).
+function AZSMaxHit_Indent(row, indent)
+	if row.indent == indent then
+		return
+	end
+	row.indent = indent
+	row.icon:ClearAllPoints()
+	row.icon:SetPoint("LEFT", row, "LEFT", 6 + indent, 0)
+	row.name:ClearAllPoints()
+	row.name:SetPoint("LEFT", row, "LEFT", 22 + indent, 0)
+	row.name:SetWidth(120 - indent)
+end
+
+-- A proc row from the game's meter: indented under the spell that triggers
+-- it (child), or a row of its own (procOnly), grayed like the indented ones. The game gives a
+-- total per proc, not single hits, so the other columns show a faint dot.
+function AZSMaxHit_PaintProc(row, item)
+	local dmg = item.dmg or (item.r and item.r.total) or 0
+	if item.child then
+		AZSMaxHit_Indent(row, 14)
+		row.name:SetText(item.label or item.name)
+	else
+		AZSMaxHit_Indent(row, 0)
+		row.name:SetText(item.name)
+	end
+	row.name:SetTextColor(0.72, 0.72, 0.72)
+	if db.showIcons then
+		local tex = iconFor(item.label or item.name)
+		if tex == QUESTION then
+			local _, _, _, spell = string.find(item.name, "^(.-): (.+)$")
+			if spell then tex = iconFor(spell) end
+		end
+		row.icon:SetTexture(tex)
+		row.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+		row.icon:SetAlpha(0.75)
+		row.icon:Show()
+	else
+		row.icon:Hide()
+	end
+	local c
+	for c = 1, table.getn(COLS) do
+		local fs = row.cells[c]
+		local key = COLS[c].key
+		if key == "total" then
+			fs:SetText(fmt(dmg))
+			fs:SetTextColor(0.72, 0.72, 0.72)
+		else
+			fs:SetText("-") -- the game doesn't report single proc hits
+			fs:SetTextColor(0.35, 0.35, 0.35)
+		end
+	end
+	AZSMaxHit_ShowCells(row, false)
+	row:Show()
 end
 
 local function refresh()
@@ -814,7 +1031,7 @@ local function refresh()
 	partyHeader:Hide()
 
 	local book = currentBook()
-	local list = sorted()
+	local list = AZSMaxHit_ExpandProcs(sorted(), book)
 	layout(showTabs)
 	local n = table.getn(list)
 	if offset > n - visibleRows then offset = n - visibleRows end
@@ -849,10 +1066,15 @@ local function refresh()
 	for i = 1, ROWS do
 		local row = rows[i]
 		local item = i <= visibleRows and list[i + offset]
-		if item then
+		if item and (item.child or item.procOnly) then
+			AZSMaxHit_PaintProc(row, item)
+		elseif item then
 			r = item.r
+			AZSMaxHit_Indent(row, 0)
 			row.name:SetText(item.name)
+			row.name:SetTextColor(1, 1, 1)
 			if db.showIcons then
+				row.icon:SetAlpha(1)
 				row.icon:SetTexture(iconFor(item.name))
 				row.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93) -- the party view may have changed it
 				row.icon:Show()
@@ -867,10 +1089,13 @@ local function refresh()
 				else
 					fs:SetText(fmt(col.value(r)))
 				end
+				if not col.bright then
+					fs:SetTextColor(0.75, 0.75, 0.75) -- a proc row may have grayed it
+				end
 			end
 			AZSMaxHit_ShowCells(row, false)
 			-- The bigger of Hit and Crit is the spell's top hit: highlight it.
-			local hitCell, critCell = row.cells[1], row.cells[2]
+			local hitCell, critCell = row.cells[HIT_I], row.cells[CRIT_I]
 			if r.crit then
 				hitCell:SetTextColor(0.75, 0.75, 0.75)
 				critCell:SetTextColor(1, 0.82, 0)
@@ -1126,10 +1351,10 @@ local function createUI()
 
 	-- Summary strip
 	tiles = {
-		makeTile(PAD + 2, 230),
-		makeTile(256, 120),
-		makeTile(384, 80),
-		makeTile(468, 78),
+		makeTile(PAD + 2, 240),
+		makeTile(262, 130),
+		makeTile(400, 140),
+		makeTile(540, 2), -- kept for the party view's layout; unused
 	}
 
 	local divider = frame:CreateTexture(nil, "ARTWORK")
@@ -1162,11 +1387,11 @@ local function createUI()
 		tabs[ti] = tab
 	end
 
-	-- Column headers: click one to sort by it. "Spell" sorts by top hit.
+	-- Column headers: click one to sort by it. "Ability" sorts by top hit.
 	header = CreateFrame("Frame", nil, frame)
 	header:SetWidth(WIDTH)
 	header:SetHeight(ROW_H)
-	headerButton(header, "best", "Spell", 22, 120, "LEFT")
+	headerButton(header, "best", "Ability", 22, 120, "LEFT")
 	local c
 	for c = 1, table.getn(COLS) do
 		local col = COLS[c]
@@ -1193,7 +1418,7 @@ local function createUI()
 			local col = COLS[c]
 			local fs = text(row, col.width, "RIGHT")
 			fs:SetPoint("RIGHT", row, "LEFT", col.right, 0)
-			if c > 2 then
+			if not col.bright then
 				fs:SetTextColor(0.75, 0.75, 0.75)
 			end
 			row.cells[c] = fs
@@ -1376,17 +1601,42 @@ function AZSMaxHit_GameMeterTotal()
 	end
 	local sum = 0
 	if type(list) == "table" then
+		local procs, procSum = {}, 0
 		local i
 		for i = 1, table.getn(list) do
 			local line = list[i]
 			if type(line) == "table" then
 				sum = sum + (tonumber(line.dmg) or 0)
+				local isProc = line.proc == 1 or line.proc == "1" or line.proc == true
+				if isProc and line.name and line.name ~= "" then
+					local raw = tonumber(line.dmg) or 0
+					local base = procBase[line.name]
+					if base and raw < base then
+						-- The game's meter started over: the baseline no longer applies.
+						procBase[line.name] = nil
+						base = nil
+					end
+					local dmg = raw - (base or 0)
+					if dmg > 0 then
+						table.insert(procs, { name = line.name, dmg = dmg, raw = raw })
+						procSum = procSum + dmg
+					elseif base then
+						-- Keep it listed (at 0) so the next reset still knows its baseline.
+						table.insert(procs, { name = line.name, dmg = 0, raw = raw })
+					end
+				end
 				if line.name and line.icon and not db.icons[line.name] then
 					rememberIcon(line.name, line.icon)
 					if db.icons[line.name] then dirty = true end
 				end
 			end
 		end
+		-- Redraw when proc damage moved, even if no combat line came in.
+		if procSum ~= AZSMaxHit_lastProcSum or table.getn(procs) ~= table.getn(meterProcs) then
+			dirty = true
+		end
+		AZSMaxHit_lastProcSum = procSum
+		meterProcs = procs
 	elseif not tonumber(total) then
 		return nil
 	end
@@ -1509,11 +1759,11 @@ SlashCmdList["AZSMAXHIT"] = function(msg)
 		say("/maxhit - show or hide the window")
 		say("/maxhit reset - clear the numbers (they also clear by themselves at every new run)")
 		say("/maxhit lock - lock the window;  /maxhit icons - icons on/off")
-		say("/maxhit meter - list what the game's meter reports, and spells still missing an icon")
+		say("/maxhit meter - list what the game's meter reports, and abilities still missing an icon")
 		say("/maxhit party - list what the game's party meter reports (co-op)")
 		say("Hit / Crit: biggest normal hit and biggest crit (the larger is highlighted).")
-		say("At: run time of the top hit.  Burst: most damage the spell did in any 1 second.")
-		say("Total: all damage the spell did (from the combat log; may differ a little from the game's meter).")
+		say("At: run time of the top hit.  Burst: most damage the ability did in any 1 second.")
+		say("Total: all damage the ability did (from the combat log; may differ a little from the game's meter).")
 		say("Click a column to sort by it. Mouse wheel scrolls.")
 		say("Co-op: a Party tab compares everyone, using the game's own party meter.")
 		say("Needs Options > Combat > Show Target Damage. Turn on Periodic Damage for DoTs and Pet Damage for pets.")
