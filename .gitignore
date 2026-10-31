@@ -1,0 +1,6 @@
+# OS clutter
+.DS_Store
+Thumbs.db
+
+# Release zips belong in GitHub Releases, not the repo
+*.zip
