@@ -34,6 +34,8 @@ In co-op, two tabs appear under the summary: one with your name for your own abi
 |---|---|
 | ![Your abilities in co-op](images/coop.png) | ![Party tab: every hero side by side](images/party.png) |
 
+*The screenshots use an example party.*
+
 The Party tab shows each hero with their class icon and color, their top ability and its DPS, their DPS, total damage and share of the party's damage.
 
 ## Install
