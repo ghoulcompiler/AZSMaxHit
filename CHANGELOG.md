@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.2
+
+- A summon's attacks are grouped: Infernal: Melee and Hellfire sit indented under Infernal, with the summon's total on the top row and each attack keeping its own Hit, Crit and Avg.
+
 ## 1.3.1
 
 - Total and Burst columns now use short numbers like 17.2K, 317K and 5.31M. Hit, Crit and Avg stay full numbers, and the TOTAL and BURST tiles at the top still show the exact number.

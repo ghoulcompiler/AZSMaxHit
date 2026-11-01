@@ -1060,6 +1060,50 @@ function AZSMaxHit_OwnView(spell, r, mine, kids)
 	return view, own + (kids[spell] or 0)
 end
 
+-- The row a summon's other attack is grouped under: Infernal: Melee and Hellfire under
+-- Infernal. That row shows the meter's one line, so these show "-". nil for a row of its
+-- own, and when several kinds of summon share the Pets line, which keeps its own row.
+function AZSMaxHit_GroupParent(spell)
+	local meter = AZSMaxHit_meterOwn
+	if not meter or meter[string.lower(spell)] then
+		return nil
+	end
+	local _, _, owner = string.find(spell, "^(.-): ")
+	local lower = owner and string.lower(owner) or SUMMON_SPELL[spell]
+	if not lower then
+		return nil
+	end
+	if not meter[lower] and not (owner and AZSMaxHit_ProcTotal(owner))
+			and not (owner and meter["pets"] and AZSMaxHit_PetsLabel() == owner) then
+		return nil
+	end
+	local prefix = lower .. ": "
+	local first
+	local s, r
+	for s, r in pairs(run.spells) do
+		if not r.extraOf then
+			local name = string.lower(s)
+			if name == lower then
+				first = s
+				break
+			end
+			if string.sub(name, 1, string.len(prefix)) == prefix and (not first or s < first) then
+				first = s
+			end
+		end
+	end
+	local log, target
+	for log, target in pairs(OWN_ALIAS) do
+		if target == lower and run.spells[log] then
+			first = log
+		end
+	end
+	if first == spell then
+		return nil
+	end
+	return first
+end
+
 -- A meter line no combat-log row stands for, like Seal Fate, whose hits are logged
 -- as Eviscerate. It is placed like a proc, or the rows would not add up to TOTAL.
 -- Summons log as "Owner: Spell" while the meter names just the owner.
@@ -1124,6 +1168,14 @@ function AZSMaxHit_ExpandProcs(list, book)
 			table.insert(out, { name = item.name .. " (other)", label = "Other hits", r = extra,
 				extra = true, parent = item.name })
 		end
+		local grouped = AZSMaxHit_grouped and AZSMaxHit_grouped[item.name]
+		if grouped then
+			table.sort(grouped, function(a, b) return a.m > b.m end)
+			local j
+			for j = 1, table.getn(grouped) do
+				table.insert(out, grouped[j])
+			end
+		end
 		local k = kids[item.name]
 		if k then
 			table.sort(k, function(a, b) return a.dmg > b.dmg end)
@@ -1142,6 +1194,7 @@ local function sorted()
 	local list = {}
 	local mine = selected == ME
 	local kids = mine and AZSMaxHit_KidSums(book) or {}
+	AZSMaxHit_grouped = {}
 	local spell, r
 	for spell, r in pairs(book.spells) do
 		if r.extraOf then
@@ -1150,7 +1203,13 @@ local function sorted()
 		local view, group = AZSMaxHit_OwnView(spell, r, mine, kids)
 		local v = col.value(view)
 		if col.key == "total" then v = group end
-		table.insert(list, { name = spell, r = view, v = v, m = r.max or 0 })
+		local under = mine and AZSMaxHit_GroupParent(spell)
+		if under then
+			AZSMaxHit_grouped[under] = AZSMaxHit_grouped[under] or {}
+			table.insert(AZSMaxHit_grouped[under], { name = spell, r = view, m = r.max or 0, attached = true })
+		else
+			table.insert(list, { name = spell, r = view, v = v, m = r.max or 0 })
+		end
 		end
 	end
 	if mine and next(book.spells) then
@@ -1660,7 +1719,7 @@ local function refresh()
 			AZSMaxHit_PaintProc(row, item)
 		elseif item then
 			r = item.r
-			AZSMaxHit_Indent(row, item.extra and 14 or 0)
+			AZSMaxHit_Indent(row, (item.extra or item.attached) and 14 or 0)
 			row.name:SetText(item.label or item.name)
 			if item.extra then
 				row.name:SetTextColor(0.72, 0.72, 0.72)
