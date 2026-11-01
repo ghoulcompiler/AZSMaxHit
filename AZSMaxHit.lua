@@ -159,6 +159,8 @@ local FALLBACK_ICONS = {
 	["Voidwalker"] = ICON_DIR .. "Spell_Shadow_SummonVoidWalker",
 	["Succubus"] = ICON_DIR .. "Spell_Shadow_SummonSuccubus",
 	["Infernal"] = ICON_DIR .. "Spell_Shadow_SummonInfernal",
+	["Doomguard"] = ICON_DIR .. "Spell_Shadow_AntiMagicShell",
+	["Dread Lord"] = ICON_DIR .. "Spell_Shadow_UnholyStrength",
 	["Water Elemental"] = ICON_DIR .. "Spell_Frost_SummonWaterElemental",
 	["Wolf"] = ICON_DIR .. "Ability_Hunter_Pet_Wolf",
 	["Spirit Wolf"] = ICON_DIR .. "Spell_Nature_SpiritWolf",
@@ -181,7 +183,12 @@ local FALLBACK_ICONS = {
 	["Killing Spree"] = ICON_DIR .. "Ability_Rogue_Sprint",
 	["Divine Storm"] = ICON_DIR .. "Spell_Holy_SealOfRighteousness",
 	["Piercing Shots"] = ICON_DIR .. "Ability_PierceDamage",
+	["Pets"] = ICON_DIR .. "Ability_Hunter_BeastCall", -- the game's meter line for all your pets
 	["Deep Wounds"] = ICON_DIR .. "Ability_BackStab",
+	["Blood Frenzy"] = ICON_DIR .. "Ability_GhoulFrenzy",
+	["Toxic Bloom"] = ICON_DIR .. "Spell_Nature_NullifyPoison",
+	["Seal Fate"] = ICON_DIR .. "Spell_Shadow_ChillTouch",
+	["Searing Totem"] = ICON_DIR .. "Spell_Fire_SearingTotem",
 	["Stormstrike"] = ICON_DIR .. "Spell_Holy_SealOfMight",
 	["Rockbiter Weapon"] = ICON_DIR .. "Spell_Nature_RockBiter",
 	["Fire Nova"] = ICON_DIR .. "Spell_Fire_SealOfFire",
@@ -204,7 +211,9 @@ local function asTexture(tex)
 	if not tex or tex == "" then
 		return nil
 	end
-	if string.find(string.lower(tex), "questionmark", 1, true) then
+	-- "Temp" is the placeholder icon of spells that never got a real one.
+	local lower = string.lower(tex)
+	if string.find(lower, "questionmark", 1, true) or lower == "temp" or string.find(lower, "\\temp$") then
 		return nil
 	end
 	if string.find(tex, "\\", 1, true) or string.find(tex, "/", 1, true) then
@@ -284,7 +293,10 @@ local function iconFor(name)
 	for i = 1, table.getn(tries) do
 		local n = tries[i]
 		if n ~= "Melee" or not owner then
-			local tex = (db and (db.icons[n] or db.iconsLC[string.lower(n)])) or FALLBACK_ICONS[n]
+			-- Saved icons outlive the addon, so a bad one must not win. "Pets" is the
+			-- meter's combined line: never trust an icon the game gave it.
+			local tex = (n ~= "Pets" and db and asTexture(db.icons[n] or db.iconsLC[string.lower(n)]))
+				or FALLBACK_ICONS[n]
 			if not tex and type(AZSSpellMeterIcon) == "table" then
 				tex = asTexture(AZSSpellMeterIcon[n])
 			end
@@ -530,7 +542,7 @@ local DOT_ONLY = {
 	["Shadow Word: Pain"] = true, ["Devouring Plague"] = true,
 	-- Not Corruption or Curse of Agony: seen in game, they also hit when cast.
 	["Serpent Sting"] = true, ["Rend"] = true, ["Deep Wounds"] = true,
-	["Rupture"] = true, ["Garrote"] = true, ["Rip"] = true,
+	["Rupture"] = true, ["Blood Frenzy"] = true,
 	["Insect Swarm"] = true, ["Ignite"] = true,
 }
 
@@ -541,9 +553,26 @@ end
 -- Abilities the combat log spells differently from the game's meter and talents.
 local LOG_NAME = {
 	["Deep Wound"] = "Deep Wounds",
+	["Rip"] = "Blood Frenzy", -- no Rip ability in this game: it is the talent's bleed
+	["Noxious Cloud"] = "Toxic Bloom", -- the talent's "toxic cloud"
+	-- The damage of these abilities comes from a separate "... Effect" spell.
+	["Immolation Trap Effect"] = "Immolation Trap",
+	["Explosive Trap Effect"] = "Explosive Trap",
+	["Hellfire Effect"] = "Hellfire",
+	["Frost Trap Aura"] = "Frost Trap",
+	["Soul Fire"] = "Soulfire", -- the meter and the game's own text write it as one word
+	["Inferno"] = "Infernal", -- the Infernal's landing, on the meter's Infernal line
 }
 
-function AZSMaxHit_LogName(spell)
+function AZSMaxHit_LogName(spell, msg)
+	-- Searing Totem's bolts are logged as "Your Attack ... Fire damage".
+	if spell == "Attack" and msg and string.find(msg, " Fire damage", 1, true) then
+		return "Searing Totem"
+	end
+	-- A Priest's Penance bolts are logged as Holy Shock, a Paladin's own spell.
+	if spell == "Holy Shock" and UnitClass("player") == "Priest" then
+		return "Penance"
+	end
 	return LOG_NAME[spell] or spell
 end
 
@@ -589,7 +618,7 @@ local function ingest(msg, kind, evt)
 	if not spell or not amount or amount <= 0 then
 		return
 	end
-	spell = AZSMaxHit_LogName(spell)
+	spell = AZSMaxHit_LogName(spell, msg)
 
 	local at = runTime()
 	local t = now()
@@ -627,6 +656,7 @@ local function resetRun(quiet)
 	AZSMaxHit_meterOwn = {}
 	AZSMaxHit_meterSum = 0
 	AZSMaxHit_ResetDirect()
+	AZSMaxHit_onePet = nil
 	db.run = { players = {} }
 	run = runBook(ME)
 	resetWindows()
@@ -729,6 +759,8 @@ local PROC_PARENT = {
 	["Rain of Chaos"] = "Rain of Fire",          -- "A second Rain of Fire falls"
 	["Corpse Explosion"] = "Seed of Corruption",
 	["Seed of Corruption"] = "Corpse Explosion", -- seen in game: Seed's bursts are logged as Corpse Explosion
+	["Dread Lord"] = "Searing Pain",             -- "Felseeker inherits your Searing Pain upgrades"
+	["Doomguard"] = "Shadow Bolt",               -- "Its Shadow Bolts hit 2 enemies"
 	-- Hunter
 	["Frenzy"] = "Multi-Shot",                   -- "a free Multi-Shot"
 	["Rapid Fire"] = "Aimed Shot",               -- "a free Aimed Shot"
@@ -769,13 +801,15 @@ local PROC_PARENT = {
 	["Riposte"] = "Ghostly Strike",              -- "a free Ghostly Strike"
 	["Killing Spree"] = "Sinister Strike",       -- "a free Sinister Strike"
 	["Preparation"] = "Gouge",                   -- "A free Gouge"
+	["Seal Fate"] = "Eviscerate",                -- "At 5 points a free Eviscerate"; a non-proc meter line
 }
 
 -- Where a meter proc line goes: "skip" (the log already has a row by that
 -- name), "child" plus the parent spell, or "alone" (a row of its own).
 -- Also returns the label to show: an item proc shows just the item's name.
 local function procPlace(p, book)
-	if book.spells[p.name] then
+	-- Also a summon's proc line with "Owner: Spell" rows (Treant: Melee).
+	if book.spells[p.name] or not AZSMaxHit_MeterOnly(p.name) then
 		return "skip"
 	end
 	local parent, label = PROC_PARENT[p.name], p.name
@@ -893,11 +927,12 @@ end
 -- A spell's row as shown: Total is the spell's own damage from the game's meter
 -- (no procs, no overkill) when the meter has a line for it; everything else
 -- comes from the combat log. `group` adds the procs under it, for sorting.
--- A spell the meter doesn't list (Corpse Explosion: the meter calls it
--- Shadowform) keeps its combat-log total, and its procs aren't added again.
+-- A spell the meter doesn't list keeps its combat-log total, unless procs sit
+-- under it (Corpse Explosion: the meter calls it Shadowform), then Total is empty.
 -- Abilities the combat log names by spell but the game's meter by caster.
 local OWN_ALIAS = {
 	["Fireball"] = "imp", -- a Warlock's Imp: "Your Fireball hits", meter line "Imp"
+	["Searing Totem"] = "attack", -- in case the meter keeps the spell's own name
 }
 
 -- This run's damage on the meter's proc line of exactly this name, if any.
@@ -912,6 +947,36 @@ function AZSMaxHit_ProcTotal(name)
 	return nil
 end
 
+-- Spells a summon casts under your name. With no meter line of their own (spell
+-- not learned), their damage is on the summon's line, so Total stays empty.
+local SUMMON_SPELL = {
+	["Hellfire"] = "infernal",  -- "it burns nearby enemies with Hellfire"
+	["Death Coil"] = "succubus", -- "Their kills trigger a Death Coil"
+}
+
+-- Which of a summon's rows shows the meter's one line for it, so it counts once:
+-- a row named just the summon, else the first "Owner: Spell" row by name.
+function AZSMaxHit_OwnerTakes(spell, owner)
+	if run.spells[owner] then
+		return false
+	end
+	local lower = string.lower(owner)
+	local log, target
+	for log, target in pairs(OWN_ALIAS) do
+		if target == lower and run.spells[log] then
+			return false
+		end
+	end
+	local prefix = owner .. ": "
+	local s
+	for s in pairs(run.spells) do
+		if s < spell and string.sub(s, 1, string.len(prefix)) == prefix then
+			return false
+		end
+	end
+	return true
+end
+
 function AZSMaxHit_OwnView(spell, r, mine, kids)
 	local meter = mine and AZSMaxHit_meterOwn
 	local own = meter and meter[string.lower(spell)]
@@ -923,11 +988,59 @@ function AZSMaxHit_OwnView(spell, r, mine, kids)
 	if not own and mine then
 		own = AZSMaxHit_ProcTotal(spell)
 	end
+	-- A summon's row ("Voidwalker: Melee"): the meter has one line per summon.
+	if not own and meter then
+		local _, _, owner = string.find(spell, "^(.-): ")
+		local line = owner and (meter[string.lower(owner)] or AZSMaxHit_ProcTotal(owner))
+		if not line and owner and SUMMONS[owner] and meter["pets"] then
+			-- On the meter's combined Pets line. With several kinds of summon it can't
+			-- be split, so it keeps its own row and these rows show "-".
+			line = AZSMaxHit_PetsLabel() == owner and meter["pets"] or 0
+		end
+		if line then
+			own = AZSMaxHit_OwnerTakes(spell, owner) and line or 0
+		end
+		if not own and SUMMON_SPELL[spell] and meter[SUMMON_SPELL[spell]] then
+			own = 0
+		end
+	end
 	if not own then
-		return r, r.total or 0
+		if not (mine and kids[spell]) then
+			return r, r.total or 0
+		end
+		-- All its hits are the procs' damage (Seal Fate before Eviscerate is learned,
+		-- Shadowform's Corpse Explosion). Its log total would count them again with
+		-- overkill, so Total stays empty ("-") and the procs carry the number.
+		own = 0
 	end
 	local view = setmetatable({ total = own, logTotal = r.total }, { __index = r })
 	return view, own + (kids[spell] or 0)
+end
+
+-- A meter line no combat-log row stands for, like Seal Fate, whose hits are logged
+-- as Eviscerate. It is placed like a proc, or the rows would not add up to TOTAL.
+-- Summons log as "Owner: Spell" while the meter names just the owner.
+function AZSMaxHit_MeterOnly(name)
+	local lower = string.lower(name)
+	-- The Pets line, when its one kind of summon has rows from the log (Treant: Melee):
+	-- that row shows the line, so the line needs no row of its own.
+	if lower == "pets" then
+		lower = string.lower(AZSMaxHit_PetsLabel())
+	end
+	local prefix = lower .. ": "
+	local spell, target
+	for spell in pairs(run.spells) do
+		local s = string.lower(spell)
+		if s == lower or string.sub(s, 1, string.len(prefix)) == prefix then
+			return false
+		end
+	end
+	for spell, target in pairs(OWN_ALIAS) do
+		if target == lower and run.spells[spell] then
+			return false
+		end
+	end
+	return true
 end
 
 -- Puts each spell's procs right after it, biggest first.
@@ -999,7 +1112,8 @@ local function sorted()
 			local p = meterProcs[i]
 			if p.dmg > 0 and procPlace(p, book) == "alone" then
 				local pr = { total = p.dmg }
-				table.insert(list, { name = p.name, r = pr, v = col.value(pr), m = 0, procOnly = true })
+				local label = p.name == "Pets" and AZSMaxHit_PetsLabel() or nil
+				table.insert(list, { name = p.name, label = label, r = pr, v = col.value(pr), m = 0, procOnly = true })
 			end
 		end
 	end
@@ -1275,7 +1389,7 @@ function AZSMaxHit_PaintProc(row, item)
 		row.name:SetText(item.label or item.name)
 	else
 		AZSMaxHit_Indent(row, 0)
-		row.name:SetText(item.name)
+		row.name:SetText(item.label or item.name)
 	end
 	row.name:SetTextColor(0.72, 0.72, 0.72)
 	if db.showIcons then
@@ -1327,7 +1441,8 @@ function AZSMaxHit_TotalTiles(logTotal)
 	local landed = (selected == ME) and AZSMaxHit_meterSum or 0
 	if landed and landed > 0 then
 		setTile(tiles[3], "TOTAL", fmt(landed))
-		local over = logTotal - landed
+		-- Pet hits aren't in the combat log, so they can't be part of the gap.
+		local over = logTotal - (landed - (AZSMaxHit_ProcTotal("Pets") or 0))
 		if over > 0 then
 			setTile(tiles[4], "OVERKILL", AZSMaxHit_FmtShort(over) .. "  |cff999999"
 				.. math.floor(over / logTotal * 100 + 0.5) .. "%|r")
@@ -2040,9 +2155,36 @@ driver:SetScript("OnEvent", function()
 	end
 end)
 
+-- The meter's "Pets" line covers all your summons. With only one kind out this
+-- run, the row can name it (Water Elemental); it stays "Pets" once there are more.
+function AZSMaxHit_PetsLabel()
+	if AZS_GetSummons and AZSMaxHit_onePet ~= false then
+		local ok, list = pcall(AZS_GetSummons)
+		if ok and type(list) == "table" then
+			local i
+			for i = 1, table.getn(list) do
+				local name = list[i].name
+				if name and name ~= "" then
+					if AZSMaxHit_onePet and AZSMaxHit_onePet ~= name then
+						AZSMaxHit_onePet = false
+						return "Pets"
+					end
+					AZSMaxHit_onePet = name
+					rememberIcon(name, list[i].icon)
+					-- A named pet the game gives no icon for still gets the pet icon.
+					if iconFor(name) == QUESTION then
+						rememberIcon(name, FALLBACK_ICONS["Pets"])
+					end
+				end
+			end
+		end
+	end
+	return AZSMaxHit_onePet or "Pets"
+end
+
 -- Meter lines carry no icon, but the game's meter snapshot knows one for each
 -- damage source (new necklaces and the like). Asked only while a line still has
--- no icon, at most every 15 seconds.
+-- no icon, at most every 3 seconds: a source's icon can still be loading at first.
 local nextIconRead = 0
 
 function AZSMaxHit_ReadSourceIcons()
@@ -2060,7 +2202,7 @@ function AZSMaxHit_ReadSourceIcons()
 	if not missing then
 		return
 	end
-	nextIconRead = GetTime() + 15
+	nextIconRead = GetTime() + 3
 	local ok, context = pcall(AZS_GetMeterContext)
 	if not ok or type(context) ~= "table" or not context.runId then
 		return
@@ -2122,7 +2264,7 @@ function AZSMaxHit_GameMeterTotal()
 						own[key] = (own[key] or 0) + dmg
 					end
 				end
-				if isProc and line.name and line.name ~= "" then
+				if line.name and line.name ~= "" and (isProc or AZSMaxHit_MeterOnly(line.name)) then
 					if dmg > 0 then
 						table.insert(procs, { name = line.name, dmg = dmg, raw = raw })
 						procSum = procSum + dmg
@@ -2267,6 +2409,10 @@ SlashCmdList["AZSMAXHIT"] = function(msg)
 		end
 		if table.getn(missing) > 0 then
 			say("no icon yet: " .. table.concat(missing, ", "))
+		end
+		if AZSMaxHit_meterRaw and AZSMaxHit_meterRaw["Pets"] then
+			local label = AZSMaxHit_PetsLabel()
+			say("Pets row: " .. label .. ", icon " .. tostring(iconFor(label)))
 		end
 	elseif msg == "party" then
 		dumpParty()

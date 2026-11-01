@@ -1,8 +1,26 @@
 # Changelog
 
-## 1.2.2
+## 1.3.0
 
-- Warrior: Deep Wounds no longer appears twice. It is now one row with its icon and its total from the game's meter.
+Every class has been played and checked against the game's meter on game 0.135.1, so the rows now add up to TOTAL in far more cases.
+
+**All classes**
+
+- Damage the game's meter lists with no matching combat log name now gets its own row, so it no longer goes missing.
+- An ability whose hits all come from a proc under it now shows `-` as its Total, and the proc row shows the damage. Examples are Eviscerate with Seal Fate before you learn Eviscerate, and Corpse Explosion with Shadowform or Seed of Corruption. Its Hit, Crit, Burst, Avg and Hits still show.
+- Pets: the game meter's Pets line has a row with an icon. With one kind of summon out, it is named after it, like Water Elemental. Summons whose hits are in the combat log show one row, not two.
+- OVERKILL no longer shrinks or disappears when you have pets.
+- New icons show up sooner at the start of a run.
+
+**By class**
+
+- Warrior: Deep Wounds is one row instead of two.
+- Rogue: Seal Fate sits under Eviscerate. Toxic Bloom is one row instead of a separate "Noxious Cloud".
+- Druid: Blood Frenzy is one row instead of a separate "Rip". Treants are one row.
+- Hunter: Immolation Trap, Explosive Trap and Frost Trap are one row each.
+- Warlock: Soulfire is one row. Each demon takes its Total from the game's meter and counts once. The Infernal's landing is part of its row. Dread Lord sits under Searing Pain and Doomguard under Shadow Bolt, the spells they cast, and both have icons.
+- Priest: Penance is one row instead of a separate "Holy Shock".
+- Shaman: Searing Totem's damage shows as Searing Totem with its icon, instead of "Attack".
 
 ## 1.2.1
 
