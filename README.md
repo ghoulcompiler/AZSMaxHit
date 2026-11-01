@@ -2,7 +2,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/GhoulCompiler/AZSMaxHit)](https://github.com/GhoulCompiler/AZSMaxHit/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/GhoulCompiler/AZSMaxHit/total)](https://github.com/GhoulCompiler/AZSMaxHit/releases)
-[![Tested with game 0.135.1](https://img.shields.io/badge/tested%20with%20game-0.135.1-brightgreen)](CHANGELOG.md)
+[![Tested with game 0.138.0](https://img.shields.io/badge/tested%20with%20game-0.138.0-brightgreen)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 An addon for [Azeroth Survivors](https://wow.aethus.pl/) that shows each ability's **biggest hit**, **biggest crit**, **burst** and **total damage** for the current run.
@@ -17,7 +17,7 @@ Damage meters tell you which ability did the most damage overall. AZS Max Hit te
 
 - **Summary at the top:** your top hit (with the ability and whether it crit), your best burst, your total damage this run, and your overkill: damage past what enemies had left.
 - **A row per ability** (spells, melee, pets and procs) with its total, biggest normal hit, biggest crit, run time of its top hit, burst, average hit, hit count and crit rate. Click a column header to sort by it.
-- **Pets and summons** get their own rows, e.g. `Water Elemental: Waterbolt`.
+- **Pets and summons** get their own rows, e.g. `Water Elemental: Waterbolt`. A Hunter's pet, whose hits aren't in the combat log, gets its numbers from the game's combat text feed (game 0.138 or later).
 - **Procs under their ability:** item and talent procs (Pendant of the Plague, Shadowy Apparitions, Shadowform, ...) appear indented under the ability that triggers them, with their total from the game's meter. The game doesn't report single proc hits, so their other columns show a dim *-*.
 - **Party view in co-op:** a Party tab compares every hero side by side: top ability, its DPS, DPS, total and share, straight from the game's party meter. See [Co-op](#co-op).
 - **Fill bars** show at a glance which abilities do the most damage, colored by damage school (Shadow, Fire, Frost, ...).
@@ -25,7 +25,7 @@ Damage meters tell you which ability did the most damage overall. AZS Max Hit te
 - **Fresh every run:** the window clears by itself when a new run starts. Nothing from past runs is kept.
 - **Resizable:** drag the grip in the bottom-right corner to set the height, and use `/maxhit scale` to shrink or enlarge the whole window; scroll with the mouse wheel.
 
-Pure Lua (`.toc` and `.lua` only): no DLLs or executables. Works in the browser and desktop editions. Tested with game version **0.135.1**.
+Pure Lua (`.toc` and `.lua` only): no DLLs or executables. Works in the browser and desktop editions. Tested with game version **0.138.0**.
 
 The addon raises the game's combat log range settings to 200, so hits on distant enemies are recorded. It changes nothing else in the game.
 

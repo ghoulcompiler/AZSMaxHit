@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0
+
+Tested with game 0.138.0.
+
+- Hunter pets now have real numbers. On game 0.138 and later, a Hunter's pet shows Hit, Crit, Burst, Avg, Hits and Crit% on its row, and can be your TOP HIT and count toward BURST. A pet's special attacks share its one row, and OVERKILL still leaves pets out. A Frost Mage's Water Elemental still shows only its Total, because the game doesn't report its single hits.
+- Hunter: Bestial Wrath's splashes go on its own row with their own numbers, so a pet's Hit, Avg and Hits only count its bites.
+- Shaman: Frostbrand Weapon now sits under Frost Shock.
+- Warlock: the Imp's row is now called Imp, with the Imp's icon, instead of Fireball.
+
 ## 1.3.4
 
 - Priest: Shadow Weaving strikes logged under Mind Blast, Psychic Scream, Mind Flay and other Shadow spells now move to the Shadow Weaving row when they are bigger than the spell's biggest crit, including ones that landed earlier in the run. Smaller strikes of a size already seen on that enemy no longer set the spell's Hit either, so Hit gets closer to its real number and should less often beat Crit. Those smaller strikes still count in the spell's Avg and Hits, Shadowy Apparitions still count under Mind Blast, and Burst can stay a little high.

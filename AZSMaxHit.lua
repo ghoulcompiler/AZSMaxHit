@@ -607,6 +607,10 @@ function AZSMaxHit_LogName(spell, msg)
 	if spell == "Holy Shock" and UnitClass("player") == "Priest" then
 		return "Penance"
 	end
+	-- A Warlock's Imp is logged as "Your Fireball", a Mage's own spell. The meter says Imp.
+	if spell == "Fireball" and UnitClass("player") == "Warlock" then
+		return "Imp"
+	end
 	return LOG_NAME[spell] or spell
 end
 
@@ -1041,8 +1045,8 @@ local PROC_PARENT = {
 	["Maelstrom Weapon"] = "Chain Lightning",    -- "a free Chain Lightning"
 	["Flametongue Weapon"] = "Fire Nova",        -- "casts a free Fire Nova"
 	["Eye of the Tempest"] = "Stormstrike",      -- "strikes again"
-	-- No Resonant Shocks or Frostbrand Weapon: the game's meter lists the Shocks
-	-- they cast under those Shocks (0.134).
+	["Frostbrand Weapon"] = "Frost Shock",       -- a proc line of its own on the meter since 0.134's note (seen on 0.138)
+	-- No Resonant Shocks: the game's meter lists the Shocks it casts under those Shocks (0.134).
 	-- Druid
 	["Omen of Clarity"] = "Starfire",            -- "a free Starfire"
 	["Starfall"] = "Starfire",
@@ -1198,6 +1202,7 @@ end
 function AZSMaxHit_ResetDirect()
 	AZSMaxHit_pending = {}
 	AZSMaxHit_weavingSizes = {}
+	AZSMaxHit_recentBites = {}
 	procLast, procCredit = {}, {}
 end
 
@@ -1229,7 +1234,6 @@ end
 -- under it (Corpse Explosion: the meter calls it Shadowform), then Total is empty.
 -- Abilities the combat log names by spell but the game's meter by caster.
 local OWN_ALIAS = {
-	["Fireball"] = "imp", -- a Warlock's Imp: "Your Fireball hits", meter line "Imp"
 	["Searing Totem"] = "attack", -- in case the meter keeps the spell's own name
 }
 
@@ -1405,7 +1409,9 @@ function AZSMaxHit_ExpandProcs(list, book)
 	local grand = 0
 	local spell, r
 	for spell, r in pairs(book.spells) do
-		grand = grand + (r.total or 0)
+		if not r.fromFeed then
+			grand = grand + (r.total or 0)
+		end
 	end
 	local out = {}
 	for i = 1, table.getn(list) do
@@ -1472,7 +1478,8 @@ local function sorted()
 		for i = 1, table.getn(meterProcs) do
 			local p = meterProcs[i]
 			if p.dmg > 0 and procPlace(p, book) == "alone" then
-				local pr = { total = p.dmg }
+				-- Hits matched to this row sort with it, so sorting by Hit finds it.
+				local pr = setmetatable({ total = p.dmg }, { __index = AZSMaxHit_ProcStats(book, p.name) or {} })
 				local label = p.name == "Pets" and AZSMaxHit_PetsLabel() or nil
 				table.insert(list, { name = p.name, label = label, r = pr, v = col.value(pr), m = 0, procOnly = true })
 			end
@@ -1940,7 +1947,9 @@ local function refresh()
 	local topName, top, grand = nil, nil, 0
 	local spell, r
 	for spell, r in pairs(book.spells) do
-		grand = grand + (r.total or 0)
+		if not r.fromFeed then
+			grand = grand + (r.total or 0)
+		end
 		if not top or (r.max or 0) > (top.max or 0) then
 			topName, top = r.label or spell, r
 		end
@@ -2624,6 +2633,120 @@ function AZSMaxHit_PetsLabel()
 	return AZSMaxHit_onePet or "Pets"
 end
 
+-- Hunter pets and the like are on the meter's Pets line but not in the combat log, while
+-- the game's combat text feed has their hits. Only for that case: summons with hits in
+-- the log (Warlock demons, Treants) would count twice.
+function AZSMaxHit_TakesPetHits()
+	return (AZSMaxHit_ProcTotal("Pets") or 0) > 0 and AZSMaxHit_MeterOnly("Pets")
+end
+
+-- `presentedAt` is GetTime() when the hit landed, so Burst counts it at the right moment
+-- even though the feed is read twice a second. `fromFeed` keeps these hits out of
+-- OVERKILL, which compares the combat log with the meter.
+function AZSMaxHit_RecordPetHit(book, e, at, procName)
+	procName = procName or "Pets"
+	local key = "@proc:" .. procName
+	local r = book.spells[key]
+	if not r then
+		r = { max = 0, extraOf = "Pets", fromFeed = true }
+		book.spells[key] = r
+	end
+	r.label = procName == "Pets" and AZSMaxHit_PetsLabel() or procName
+	local amount = tonumber(e.amount)
+	record(book, key, amount, e.critical and true or false, e.targetName, at, "COMBAT_TEXT_FEED",
+		r.label .. (e.critical and " crits " or " hits ") .. tostring(e.targetName) .. " for " .. amount)
+	local hw = windowsFor(ME)
+	local sw = hw.spells[key]
+	if not sw then
+		sw = newWindow()
+		hw.spells[key] = sw
+	end
+	local t = tonumber(e.presentedAt) or now()
+	recordBurst(book, key, pushWindow(sw, t, amount), at)
+	recordTotalBurst(book, pushWindow(hw.total, t, amount), at)
+	dirty = true
+end
+
+-- Bestial Wrath: "bites tear through 2 more enemies nearby for {v}% of the bite". Seen on a
+-- White Devilsaur: the splash is a plain pet hit about 0.28 s after the bite, on another enemy,
+-- with the bite's exact amount and no crit flag, so a crit's splash looked like a normal hit as
+-- big as the crit. Two bites can land at the same moment, so a shared moment proves nothing.
+-- A bite is remembered across reads, since its splash can arrive in the next one.
+AZSMaxHit_recentBites = {}
+
+function AZSMaxHit_PlacePetHits(book, hits, at)
+	local wrath = (AZSMaxHit_ProcTotal("Bestial Wrath") or 0) > 0
+	local i
+	for i = 1, table.getn(hits) do
+		local e = hits[i]
+		local t = tonumber(e.presentedAt) or 0
+		local amount = tonumber(e.amount)
+		local recent = AZSMaxHit_recentBites
+		while recent[1] and t - recent[1].t > 1 do
+			table.remove(recent, 1)
+		end
+		local bite
+		if wrath and not e.critical then
+			local j
+			for j = 1, table.getn(recent) do
+				local b = recent[j]
+				local gap = t - b.t
+				if b.amount == amount and b.targetId ~= e.targetId and b.splashes < 2
+						and gap >= 0.1 and gap <= 0.45 then
+					bite = b
+					break
+				end
+			end
+		end
+		if bite then
+			bite.splashes = bite.splashes + 1
+			AZSMaxHit_RecordPetHit(book, e, at, "Bestial Wrath")
+		else
+			table.insert(recent, { t = t, amount = amount, targetId = e.targetId, splashes = 0 })
+			AZSMaxHit_RecordPetHit(book, e, at)
+		end
+	end
+end
+
+AZSMaxHit_feedCursor = nil
+
+function AZSMaxHit_ReadFeed()
+	if not AZS_GetCombatTextEvents then
+		return
+	end
+	local page
+	for page = 1, 8 do
+		local ok, r, err = pcall(AZS_GetCombatTextEvents, AZSMaxHit_feedCursor, 256)
+		if not ok then
+			return
+		end
+		if not r then
+			-- A new world starts a new stream, which the old cursor doesn't belong to.
+			if err and err.code == "STREAM_CHANGED" then
+				AZSMaxHit_feedCursor = nil
+			end
+			return
+		end
+		AZSMaxHit_feedCursor = r.cursor or AZSMaxHit_feedCursor
+		local events = r.events or {}
+		if table.getn(events) > 0 and AZSMaxHit_TakesPetHits() then
+			local hits = {}
+			local i
+			for i = 1, table.getn(events) do
+				local e = events[i]
+				if e.kind == "damage" and (e.sourceKind == "summon" or e.sourceKind == "pet")
+						and (tonumber(e.amount) or 0) > 0 then
+					table.insert(hits, e)
+				end
+			end
+			AZSMaxHit_PlacePetHits(run, hits, runTime())
+		end
+		if not r.hasMore then
+			return
+		end
+	end
+end
+
 -- Meter lines carry no icon, but the game's meter snapshot knows one for each
 -- damage source (new necklaces and the like). Asked only while a line still has
 -- no icon, at most every 3 seconds: a source's icon can still be loading at first.
@@ -2767,6 +2890,7 @@ driver:SetScript("OnUpdate", function()
 		if lvl and lvl > 0 and db.run.level and lvl < db.run.level then
 			newRun = true
 		end
+		AZSMaxHit_ReadFeed()
 		-- The game's own damage meter starts over with each run.
 		local meter = AZSMaxHit_GameMeterTotal()
 		if meter and db.run.meter and meter + 1 < db.run.meter then
