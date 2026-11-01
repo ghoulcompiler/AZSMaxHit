@@ -10,10 +10,11 @@ local MAX_HEIGHT = 720
 local DEFAULT_HEIGHT = 250
 local ROW_H = 14
 local TAB_H = 18
-local WIDTH = 550
+local WIDTH = 500         -- 42 more with the At column on (AZSMaxHit_ApplyColumns)
 local ME = "@me"          -- key for your own data, whatever your hero is called
 local SOLID = "Interface\\Buttons\\WHITE8X8"
-local BAR_W = 208          -- fill bars: from the row's left edge to the Total column
+local BAR_W = 203          -- fill bars: from the row's left edge to the Total column
+local NAME_W = 138         -- the Ability column
 local PARTY_BAR_W = 142    -- fill bars in the Party tab: the Hero column
 local BURST_WINDOW = 1.0   -- seconds
 
@@ -71,12 +72,22 @@ local function fmt(n)
 end
 
 function AZSMaxHit_FmtShort(n)
-	if n >= 1000000 then
-		return string.format("%.1fM", n / 1000000)
+	if n >= 999500 then
+		return string.format("%.2fM", n / 1000000)
+	elseif n >= 100000 then
+		return string.format("%.0fK", n / 1000)
 	elseif n >= 1000 then
-		return string.format("%.0fk", n / 1000)
+		return string.format("%.1fK", n / 1000)
 	end
 	return tostring(math.floor(n + 0.5))
+end
+
+-- Total and Burst columns: short numbers, "-" when there are none.
+function AZSMaxHit_FmtColumn(n)
+	if not n or n <= 0 then
+		return "-"
+	end
+	return AZSMaxHit_FmtShort(n)
 end
 
 local function fmtTime(t)
@@ -178,12 +189,14 @@ local FALLBACK_ICONS = {
 	["Fire Blast"] = ICON_DIR .. "Spell_Fire_Fireball",
 	["Blizzard"] = ICON_DIR .. "Spell_Frost_IceStorm",
 	["Pyroclasm"] = ICON_DIR .. "Spell_Fire_Fireball02",
+	["Blast Wave"] = ICON_DIR .. "Spell_Holy_Excorcism_02", -- also outside a Mage's spellbook
 	["Rampage"] = ICON_DIR .. "Spell_Shadow_UnholyFrenzy",
 	["Omen of Clarity"] = ICON_DIR .. "Spell_Nature_CrystalBall",
 	["Killing Spree"] = ICON_DIR .. "Ability_Rogue_Sprint",
 	["Divine Storm"] = ICON_DIR .. "Spell_Holy_SealOfRighteousness",
 	["Piercing Shots"] = ICON_DIR .. "Ability_PierceDamage",
 	["Pets"] = ICON_DIR .. "Ability_Hunter_BeastCall", -- the game's meter line for all your pets
+	["Other"] = ICON_DIR .. "INV_Misc_Gear_01", -- the game's meter line for uncredited damage
 	["Deep Wounds"] = ICON_DIR .. "Ability_BackStab",
 	["Blood Frenzy"] = ICON_DIR .. "Ability_GhoulFrenzy",
 	["Toxic Bloom"] = ICON_DIR .. "Spell_Nature_NullifyPoison",
@@ -202,6 +215,7 @@ local FALLBACK_ICONS = {
 	["Pendant of the Plague"] = ICON_DIR .. "INV_Jewelry_Necklace_28Naxxramas",
 	["The Reaper's Amulet"] = ICON_DIR .. "INV_Jewelry_Necklace_27Naxxramas",
 	["Breath of the Black Dragon"] = ICON_DIR .. "INV_Jewelry_Necklace_19",
+	["Choker of the Fire Lord"] = ICON_DIR .. "INV_Jewelry_Amulet_05",
 	["The Eternal Talisman"] = ICON_DIR .. "INV_Jewelry_Necklace_21",
 	["The Legionlord's Medallion"] = ICON_DIR .. "INV_Jewelry_Necklace_13",
 	["Amulet of the Ancients"] = ICON_DIR .. "INV_Jewelry_Necklace_23",
@@ -550,6 +564,22 @@ function AZSMaxHit_IsDotOnly(spell)
 	return DOT_ONLY[spell]
 end
 
+-- Breath of the Black Dragon's burn is logged as "Ignite" in the spell's own school,
+-- while a Mage's real Ignite is Fire. Returns the neck's meter line for such a tick.
+function AZSMaxHit_NeckBurn(spell, msg)
+	if spell ~= "Ignite" or string.find(msg, " Fire damage", 1, true) then
+		return nil
+	end
+	local i
+	for i = 1, table.getn(meterProcs) do
+		if string.find(meterProcs[i].name, "^Breath of the Black Dragon: ") then
+			return meterProcs[i].name
+		end
+	end
+	-- Ticks can come before the first read of the meter.
+	return "Breath of the Black Dragon: Mind Flay"
+end
+
 -- Abilities the combat log spells differently from the game's meter and talents.
 local LOG_NAME = {
 	["Deep Wound"] = "Deep Wounds",
@@ -623,6 +653,15 @@ local function ingest(msg, kind, evt)
 	local at = runTime()
 	local t = now()
 	local book = run
+	local neck = AZSMaxHit_NeckBurn(spell, msg)
+	if neck then
+		-- Its numbers go on the neck's row, as with matched direct hits.
+		local _, _, item, parent = string.find(neck, "^(.-): (.+)$")
+		spell = "@proc:" .. neck
+		if not book.spells[spell] then
+			book.spells[spell] = { max = 0, extraOf = parent, label = item }
+		end
+	end
 	if kind == "yours" and AZSMaxHit_IsDotOnly(spell) then
 		AZSMaxHit_HoldDirect(book, spell, amount, crit, target, at, t)
 		recordTotalBurst(book, pushWindow(windowsFor(ME).total, t, amount), at)
@@ -682,15 +721,17 @@ local function critPctOf(r)
 end
 
 local COLS = {
-	{ key = "total", label = "Total", right = 212, width = 68, value = function(r) return r.total or 0 end },
-	{ key = "hit",   label = "Hit",   right = 268, width = 54, value = function(r) return r.maxHit or 0 end, bright = true },
-	{ key = "crit",  label = "Crit",  right = 324, width = 54, value = function(r) return r.maxCrit or 0 end, bright = true },
-	{ key = "at",    label = "At",    right = 366, width = 40, value = function(r) return r.at or 999999 end, asc = true,
+	{ key = "total", label = "Total", right = 207, width = 46, value = function(r) return r.total or 0 end,
+		text = function(r) return AZSMaxHit_FmtColumn(r.total) end },
+	{ key = "hit",   label = "Hit",   right = 263, width = 54, value = function(r) return r.maxHit or 0 end, bright = true },
+	{ key = "crit",  label = "Crit",  right = 319, width = 54, value = function(r) return r.maxCrit or 0 end, bright = true },
+	{ key = "at",    label = "At",    right = 361, width = 40, value = function(r) return r.at or 999999 end, asc = true,
 		text = function(r) return fmtTime(r.at) end },
-	{ key = "burst", label = "Burst", right = 426, width = 58, value = function(r) return r.burst or 0 end },
-	{ key = "avg",   label = "Avg",   right = 472, width = 44, value = avgOf },
-	{ key = "hits",  label = "Hits",  right = 510, width = 36, value = function(r) return r.hits or 0 end },
-	{ key = "critp", label = "Crit%", right = 544, width = 30, value = critPctOf,
+	{ key = "burst", label = "Burst", right = 375, width = 50, value = function(r) return r.burst or 0 end,
+		text = function(r) return AZSMaxHit_FmtColumn(r.burst) end },
+	{ key = "avg",   label = "Avg",   right = 421, width = 44, value = avgOf },
+	{ key = "hits",  label = "Hits",  right = 459, width = 36, value = function(r) return r.hits or 0 end },
+	{ key = "critp", label = "Crit%", right = 493, width = 30, value = critPctOf,
 		text = function(r)
 			if (r.hits or 0) == 0 then return "-" end
 			return string.format("%d%%", math.floor(critPctOf(r) + 0.5))
@@ -704,6 +745,7 @@ do
 	for i = 1, table.getn(COLS) do
 		if COLS[i].key == "hit" then HIT_I = i end
 		if COLS[i].key == "crit" then CRIT_I = i end
+		if COLS[i].key == "at" then AZSMaxHit_AtIndex = i end
 	end
 end
 
@@ -751,6 +793,7 @@ local PROC_PARENT = {
 	["Presence of Mind"] = "Arcane Missiles",
 	["Hot Streak"] = "Pyroblast",                -- "casts a free Pyroblast"
 	["Pyroclasm"] = "Blast Wave",                -- its explosion is logged as Blast Wave
+	["Choker of the Fire Lord"] = "Blast Wave",  -- the necklace's blasts, in the spell's own school
 	["Splitting Ice"] = "Frostbolt",
 	-- Warlock
 	["Nightfall"] = "Shadow Bolt",               -- "fire a free Shadow Bolt"
@@ -1073,7 +1116,11 @@ function AZSMaxHit_ExpandProcs(list, book)
 		end
 		table.insert(out, item)
 		local extra = not item.procOnly and book.spells[item.name .. " (other)"]
-		if extra and (extra.hits or 0) > 0 then
+		-- Under 1% of the spell's logged damage is noise: a stray hit or two the meter's
+		-- timing couldn't place. A spell that really hits directly still shows them.
+		local own = book.spells[item.name]
+		if extra and (extra.hits or 0) > 0
+				and (extra.total or 0) * 100 >= ((own and own.total) or 0) then
 			table.insert(out, { name = item.name .. " (other)", label = "Other hits", r = extra,
 				extra = true, parent = item.name })
 		end
@@ -1208,11 +1255,11 @@ end
 
 -- left / right edges and justification of each party column
 local PCOLS = {
-	{ label = "Top ability", left = 150, width = 150, justify = "LEFT" },
-	{ label = "Top DPS",   right = 350, width = 56 },
-	{ label = "DPS",       right = 420, width = 60 },
-	{ label = "Total",     right = 492, width = 66 },
-	{ label = "Share",     right = 544, width = 46 },
+	{ label = "Top ability", left = 150, width = 118, justify = "LEFT" },
+	{ label = "Top DPS",   right = 318, width = 48 },
+	{ label = "DPS",       right = 370, width = 48 },
+	{ label = "Total",     right = 432, width = 58 },
+	{ label = "Share",     right = 493, width = 46 },
 }
 
 -- Globals: keeps createUI and refresh under Lua 5.0's 32-upvalue limit.
@@ -1264,7 +1311,11 @@ end
 function AZSMaxHit_ShowCells(row, partyMode)
 	local i
 	for i = 1, table.getn(row.cells) do
-		if partyMode then row.cells[i]:Hide() else row.cells[i]:Show() end
+		if partyMode or (i == AZSMaxHit_AtIndex and not db.showAt) then
+			row.cells[i]:Hide()
+		else
+			row.cells[i]:Show()
+		end
 	end
 	for i = 1, table.getn(row.pcells) do
 		if partyMode then row.pcells[i]:Show() else row.pcells[i]:Hide() end
@@ -1327,6 +1378,7 @@ function AZSMaxHit_RefreshParty()
 		local h = i <= visibleRows and party[i + offset]
 		if h then
 			AZSMaxHit_Indent(row, 0)
+			row.name:SetWidth(120) -- the Party tab's layout doesn't change with the At column
 			local pr, pg, pb = classColor(h.class)
 			AZSMaxHit_Bar(row, most > 0 and h.dmg / most, pr, pg, pb, 0.3, PARTY_BAR_W)
 			row.icon:SetAlpha(1)
@@ -1347,7 +1399,7 @@ function AZSMaxHit_RefreshParty()
 			row.pcells[1]:SetText((h.top and h.top ~= "") and h.top or "-")
 			row.pcells[2]:SetText(fmt(h.topdps))
 			row.pcells[3]:SetText(fmt(h.dps))
-			row.pcells[4]:SetText(fmt(h.dmg))
+			row.pcells[4]:SetText(AZSMaxHit_FmtColumn(h.dmg))
 			row.pcells[5]:SetText(string.format("%d%%", math.floor(share * 100 + 0.5)))
 			row.pcells[1]:SetTextColor(1, 1, 1)
 			row.pcells[4]:SetTextColor(1, 1, 1)
@@ -1376,7 +1428,7 @@ function AZSMaxHit_Indent(row, indent)
 	row.icon:SetPoint("LEFT", row, "LEFT", 6 + indent, 0)
 	row.name:ClearAllPoints()
 	row.name:SetPoint("LEFT", row, "LEFT", 22 + indent, 0)
-	row.name:SetWidth(120 - indent)
+	row.name:SetWidth(NAME_W - indent)
 end
 
 -- A proc row from the game's meter: indented under the spell that triggers
@@ -1412,7 +1464,7 @@ function AZSMaxHit_PaintProc(row, item)
 		local fs = row.cells[c]
 		local col = COLS[c]
 		if col.key == "total" then
-			fs:SetText(fmt(dmg))
+			fs:SetText(AZSMaxHit_FmtColumn(dmg))
 			fs:SetTextColor(0.72, 0.72, 0.72)
 		elseif stats and (stats.hits or 0) > 0 then
 			if col.text then
@@ -1582,14 +1634,14 @@ local function refresh()
 	if top then
 		local label = "TOP HIT"
 		if top.crit then label = label .. "  |cffffd100CRIT|r" end
-		if top.at then label = label .. "  |cff777777at " .. fmtTime(top.at) .. "|r" end
+		if top.at and db.showAt then label = label .. "  |cff777777at " .. fmtTime(top.at) .. "|r" end
 		setTile(tiles[1], label, (top.crit and "|cffffd100" or "|cffffffff") .. fmt(top.max)
 			.. "|r  |cffbbbbbb" .. topName .. "|r")
 	else
 		setTile(tiles[1], "TOP HIT", "|cff777777-|r")
 	end
 	local burst = book.burst.amount
-	setTile(tiles[2], "BURST" .. (book.burst.at and ("  |cff777777at " .. fmtTime(book.burst.at) .. "|r") or ""),
+	setTile(tiles[2], "BURST" .. (book.burst.at and db.showAt and ("  |cff777777at " .. fmtTime(book.burst.at) .. "|r") or ""),
 		burst and fmt(burst) or "|cff777777-|r")
 	AZSMaxHit_TotalTiles(grand)
 
@@ -1742,8 +1794,48 @@ local function headerButton(parent, key, label, left, width, justify)
 		paintHeaders()
 		refresh()
 	end)
-	table.insert(headerCells, { key = key, fs = fs })
+	table.insert(headerCells, { key = key, fs = fs, b = b })
 	return b
+end
+
+-- The At column is off by default (/maxhit at). Turning it on widens the window by
+-- 42 px and moves the columns after it; everything before it stays where it is.
+function AZSMaxHit_ApplyColumns()
+	local extra = db.showAt and 42 or 0
+	WIDTH = 500 + extra
+	frame:SetWidth(WIDTH)
+	frame.titleBtn:SetWidth(WIDTH - 60)
+	frame.divider:SetWidth(WIDTH - 2 * PAD)
+	header:SetWidth(WIDTH)
+	lastLayout = nil -- the scrollbar sits at the window's right edge
+	if not db.showAt and sortKey == "at" then
+		sortKey = "total"
+		db.sort = sortKey
+	end
+	local i, c
+	for i = 1, table.getn(headerCells) do
+		local h = headerCells[i]
+		if h.key == "at" then
+			if db.showAt then h.b:Show() else h.b:Hide() end
+		end
+		for c = AZSMaxHit_AtIndex + 1, table.getn(COLS) do
+			local col = COLS[c]
+			if col.key == h.key then
+				h.b:ClearAllPoints()
+				h.b:SetPoint("LEFT", header, "LEFT", col.right - col.width + extra, 0)
+			end
+		end
+	end
+	for i = 1, table.getn(rows) do
+		rows[i]:SetWidth(WIDTH)
+		for c = AZSMaxHit_AtIndex + 1, table.getn(COLS) do
+			local fs = rows[i].cells[c]
+			fs:ClearAllPoints()
+			fs:SetPoint("RIGHT", rows[i], "LEFT", COLS[c].right + extra, 0)
+		end
+		AZSMaxHit_ShowCells(rows[i], false)
+	end
+	paintHeaders()
 end
 
 local function makeTile(x, width)
@@ -1879,6 +1971,7 @@ local function createUI()
 	local titleBtn = CreateFrame("Button", nil, frame)
 	titleBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, -5)
 	titleBtn:SetWidth(WIDTH - 60)
+	frame.titleBtn = titleBtn
 	titleBtn:SetHeight(16)
 	titleBtn:RegisterForDrag("LeftButton")
 	titleBtn:SetScript("OnDragStart", function()
@@ -1903,10 +1996,10 @@ local function createUI()
 
 	-- Summary strip
 	tiles = {
-		makeTile(PAD + 2, 222),
-		makeTile(238, 100),
-		makeTile(342, 104),
-		makeTile(450, 92),
+		makeTile(PAD + 2, 198),
+		makeTile(212, 80),
+		makeTile(294, 96),
+		makeTile(392, 102),
 	}
 
 	local divider = frame:CreateTexture(nil, "ARTWORK")
@@ -1914,6 +2007,7 @@ local function createUI()
 	divider:SetVertexColor(1, 1, 1, 0.08)
 	divider:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, CONTENT_Y + 6)
 	divider:SetWidth(WIDTH - 2 * PAD)
+	frame.divider = divider
 	divider:SetHeight(1)
 
 	-- Tabs (co-op only): your spells, and the Party table.
@@ -1943,7 +2037,7 @@ local function createUI()
 	header = CreateFrame("Frame", nil, frame)
 	header:SetWidth(WIDTH)
 	header:SetHeight(ROW_H)
-	headerButton(header, "best", "Ability", 22, 120, "LEFT")
+	headerButton(header, "best", "Ability", 22, NAME_W, "LEFT")
 	local c
 	for c = 1, table.getn(COLS) do
 		local col = COLS[c]
@@ -1983,6 +2077,7 @@ local function createUI()
 		AZSMaxHit_PartyCells(row)
 		rows[i] = row
 	end
+	AZSMaxHit_ApplyColumns()
 
 	emptyText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	emptyText:SetWidth(WIDTH - 40)
@@ -2374,6 +2469,11 @@ SlashCmdList["AZSMAXHIT"] = function(msg)
 		db.showIcons = not db.showIcons
 		say(db.showIcons and "icons on." or "icons off.")
 		refresh()
+	elseif msg == "at" then
+		db.showAt = not db.showAt
+		AZSMaxHit_ApplyColumns()
+		say(db.showAt and "Times on." or "Times off.")
+		refresh()
 	elseif msg == "meter" then
 		-- What the game's own meter reports, to match names and icons.
 		if not AZS_GetMeter then
@@ -2421,12 +2521,12 @@ SlashCmdList["AZSMAXHIT"] = function(msg)
 	elseif msg == "help" then
 		say("/maxhit - show or hide the window")
 		say("/maxhit reset - clear the numbers (they also clear by themselves at every new run)")
-		say("/maxhit lock - lock the window;  /maxhit icons - icons on/off")
+		say("/maxhit lock - lock the window;  /maxhit icons - icons on/off;  /maxhit at - times of top hits on/off")
 		say("/maxhit meter - list what the game's meter reports, and abilities still missing an icon")
 		say("/maxhit party - list what the game's party meter reports (co-op)")
 		say("/maxhit top - the game's exact message for each ability's biggest hits")
 		say("Hit / Crit: biggest normal hit and biggest crit (the larger is highlighted).")
-		say("At: run time of the top hit.  Burst: most damage the ability did in any 1 second.")
+		say("At (if on): run time of the top hit.  Burst: most damage the ability did in any 1 second.")
 		say("Total: the ability's own damage from the game's meter (no procs, no overkill). Indented rows are its procs.")
 		say("Damage-over-time spells show only their ticks. Other hits the game logs under their name (Shadow Weaving strikes, Pendant of the Plague's explosion) go to that proc's row, matched by the game's meter; what can't be matched shows as Other hits.")
 		say("Overkill: damage past what enemies had left (combat log minus the game's meter).")

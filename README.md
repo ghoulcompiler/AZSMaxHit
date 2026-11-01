@@ -15,7 +15,7 @@ Damage meters tell you which ability did the most damage overall. AZS Max Hit te
 
 ## Features
 
-- **Summary at the top:** your top hit (with the ability, whether it crit, and when), your best burst, your total damage this run, and your overkill: damage past what enemies had left.
+- **Summary at the top:** your top hit (with the ability and whether it crit), your best burst, your total damage this run, and your overkill: damage past what enemies had left.
 - **A row per ability** (spells, melee, pets and procs) with its total, biggest normal hit, biggest crit, run time of its top hit, burst, average hit, hit count and crit rate. Click a column header to sort by it.
 - **Pets and summons** get their own rows, e.g. `Water Elemental: Waterbolt`.
 - **Procs under their ability:** item and talent procs (Pendant of the Plague, Shadowy Apparitions, Shadowform, ...) appear indented under the ability that triggers them, with their total from the game's meter. The game doesn't report single proc hits, so their other columns show a dim *-*.
@@ -69,6 +69,7 @@ The addon reads the damage the game reports, so turn these on in **Options → C
 | `/maxhit reset` | Clear the numbers now (they also clear by themselves at every new run) |
 | `/maxhit lock` | Lock the window's position and size |
 | `/maxhit icons` | Icons on or off |
+| `/maxhit at` | Show or hide when top hits and bursts happened: the At column and the times in the summary (off by default) |
 | `/maxhit meter` | List what the game's own meter reports, and abilities still missing an icon |
 | `/maxhit party` | List what the game's party meter reports (co-op) |
 | `/maxhit top` | Print the game's exact message for each ability's biggest hits |
@@ -81,7 +82,7 @@ The addon reads the damage the game reports, so turn these on in **Options → C
 | **Total** | The ability's own damage this run, from the game's meter: procs and overkill not included. Sorting by Total sorts an ability together with its procs |
 | **Hit** | Biggest normal (non-crit) hit |
 | **Crit** | Biggest crit. Whichever of Hit and Crit is larger is highlighted |
-| **At** | Run time when the ability's top hit landed |
+| **At** | Run time when the ability's top hit landed. Off by default, turn it on with `/maxhit at` |
 | **Burst** | Most damage the ability did within any one second |
 | **Avg** | Average hit |
 | **Hits** | Number of hits |

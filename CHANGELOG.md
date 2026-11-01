@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.1
+
+- Total and Burst columns now use short numbers like 17.2K, 317K and 5.31M. Hit, Crit and Avg stay full numbers, and the TOTAL and BURST tiles at the top still show the exact number.
+- The window is narrower, 500 instead of 550 wide, so it covers less of the game.
+- Times are now off by default: the At column and the time next to TOP HIT and BURST. Turn them on with `/maxhit at`, which also widens the window a little.
+- The Party tab's Total also uses short numbers.
+- Priest: Breath of the Black Dragon's burn no longer appears a second time as an "Ignite" row. Its hits now show on the necklace's row under Mind Flay, and the rows add up to TOTAL.
+- Choker of the Fire Lord now sits under Blast Wave, the name its blasts have in the combat log, so they no longer show as a separate total.
+- The game meter's Other line, for damage it doesn't credit to a spell or item, has an icon instead of a question mark.
+- An "Other hits" row only shows when it is at least 1% of the spell's logged damage, so a stray hit or two no longer adds a row. `/maxhit top` still lists them.
+
 ## 1.3.0
 
 Every class has been played and checked against the game's meter on game 0.135.1, so the rows now add up to TOTAL in far more cases.
