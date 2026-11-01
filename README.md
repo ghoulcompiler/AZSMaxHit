@@ -78,6 +78,8 @@ The addon reads the damage the game reports, so turn these on in **Options → C
 | `/maxhit top` | Print the game's exact message for each ability's biggest hits |
 | `/maxhit help` | List all commands in game |
 
+<img src="images/commands.png" alt="All AZS Max Hit commands and what they do" width="640">
+
 ## Columns
 
 | Column | Meaning |
