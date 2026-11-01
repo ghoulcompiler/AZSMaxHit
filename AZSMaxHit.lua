@@ -181,6 +181,7 @@ local FALLBACK_ICONS = {
 	["Killing Spree"] = ICON_DIR .. "Ability_Rogue_Sprint",
 	["Divine Storm"] = ICON_DIR .. "Spell_Holy_SealOfRighteousness",
 	["Piercing Shots"] = ICON_DIR .. "Ability_PierceDamage",
+	["Deep Wounds"] = ICON_DIR .. "Ability_BackStab",
 	["Stormstrike"] = ICON_DIR .. "Spell_Holy_SealOfMight",
 	["Rockbiter Weapon"] = ICON_DIR .. "Spell_Nature_RockBiter",
 	["Fire Nova"] = ICON_DIR .. "Spell_Fire_SealOfFire",
@@ -537,6 +538,15 @@ function AZSMaxHit_IsDotOnly(spell)
 	return DOT_ONLY[spell]
 end
 
+-- Abilities the combat log spells differently from the game's meter and talents.
+local LOG_NAME = {
+	["Deep Wound"] = "Deep Wounds",
+}
+
+function AZSMaxHit_LogName(spell)
+	return LOG_NAME[spell] or spell
+end
+
 -- Direct hits under a DoT's name wait here until the next read of the game's
 -- meter tells which proc they were (AZSMaxHit_PlaceDirect).
 AZSMaxHit_pending = {}
@@ -579,6 +589,7 @@ local function ingest(msg, kind, evt)
 	if not spell or not amount or amount <= 0 then
 		return
 	end
+	spell = AZSMaxHit_LogName(spell)
 
 	local at = runTime()
 	local t = now()
@@ -889,11 +900,28 @@ local OWN_ALIAS = {
 	["Fireball"] = "imp", -- a Warlock's Imp: "Your Fireball hits", meter line "Imp"
 }
 
+-- This run's damage on the meter's proc line of exactly this name, if any.
+function AZSMaxHit_ProcTotal(name)
+	local i
+	for i = 1, table.getn(meterProcs) do
+		local p = meterProcs[i]
+		if p.name == name and p.dmg > 0 then
+			return p.dmg
+		end
+	end
+	return nil
+end
+
 function AZSMaxHit_OwnView(spell, r, mine, kids)
 	local meter = mine and AZSMaxHit_meterOwn
 	local own = meter and meter[string.lower(spell)]
 	if not own and meter and OWN_ALIAS[spell] then
 		own = meter[OWN_ALIAS[spell]]
+	end
+	-- A proc with a combat-log row of its own name (Deep Wounds): no separate
+	-- proc row is shown, so the row's Total is the meter's number.
+	if not own and mine then
+		own = AZSMaxHit_ProcTotal(spell)
 	end
 	if not own then
 		return r, r.total or 0

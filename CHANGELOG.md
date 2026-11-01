@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2
+
+- Warrior: Deep Wounds no longer appears twice. It is now one row with its icon and its total from the game's meter.
+
 ## 1.2.1
 
 - Updated for the Enhancement Shaman rework (game 0.134 and 0.135): Stormstrike and Rockbiter Weapon have their icons, Flametongue Weapon sits under Fire Nova, and Eye of the Tempest sits under Stormstrike.
