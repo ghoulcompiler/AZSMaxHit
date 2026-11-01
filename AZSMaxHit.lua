@@ -875,6 +875,40 @@ end
 -- spell's "Other hits" row. Called twice a second from the meter read.
 local procLast, procCredit = {}, {}
 
+-- The one proc with damage placed under `spell`, and its label; nil if none or several.
+function AZSMaxHit_OnlyChild(procs, spell, book)
+	local name, label
+	local i
+	for i = 1, table.getn(procs) do
+		local p = procs[i]
+		if p.dmg > 0 then
+			local where, parent, l = procPlace(p, book)
+			if where == "child" and parent == spell then
+				if name then
+					return nil
+				end
+				name, label = p.name, l
+			end
+		end
+	end
+	return name, label
+end
+
+-- A proc of its own (Shadow Weaving) with its usual hit size known doesn't take a hit
+-- 10x that when the spell has its own proc: Pendant of the Plague's 141,900 explosion
+-- could land on Weaving, whose hits average a few hundred, just because Weaving's
+-- total rose the most at that moment.
+function AZSMaxHit_TooBigFor(procName, where, h, procs, book)
+	if where ~= "alone" or not AZSMaxHit_OnlyChild(procs, h.spell, book) then
+		return false
+	end
+	local stats = book.spells["@proc:" .. procName]
+	if not stats or (stats.hits or 0) < 10 then
+		return false
+	end
+	return h.amount > 10 * (stats.total or 0) / stats.hits
+end
+
 function AZSMaxHit_PlaceDirect(procs)
 	local book = run
 	local i
@@ -906,7 +940,8 @@ function AZSMaxHit_PlaceDirect(procs)
 			local where, parent, label = procPlace(p, book)
 			local c = credit[p.name] or 0
 			if c > 0 and ((where == "child" and parent == h.spell) or where == "alone")
-					and h.amount <= c * 4 then
+					and h.amount <= c * 4
+					and not AZSMaxHit_TooBigFor(p.name, where, h, procs, book) then
 				local fits = h.amount <= c
 				if (fits and not bestFits) or (fits == bestFits and c > bestCredit) then
 					best, bestCredit, bestLabel, bestFits = p.name, c, label, fits
@@ -918,7 +953,14 @@ function AZSMaxHit_PlaceDirect(procs)
 			credit[best] = credit[best] - h.amount
 			key, label = "@proc:" .. best, bestLabel
 		elseif h.age >= 1 then
-			key, label = h.spell .. " (other)", h.spell .. " (other hits)"
+			-- Mostly overkill can make a hit too big for the rise it caused. With one
+			-- proc under the spell, that is whose it is (Pendant of the Plague).
+			local only, onlyLabel = AZSMaxHit_OnlyChild(procs, h.spell, book)
+			if only then
+				key, label = "@proc:" .. only, onlyLabel
+			else
+				key, label = h.spell .. " (other)", h.spell .. " (other hits)"
+			end
 		end
 		if key then
 			if not book.spells[key] then

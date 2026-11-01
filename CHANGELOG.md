@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.3
+
+- Big hits that mostly overkill now go to the proc that caused them, when a damage-over-time spell has exactly one proc under it. For example, Pendant of the Plague's explosions no longer end up in an "Other hits" row under Devouring Plague.
+- Procs like Shadow Weaving no longer take a hit far above their usual size when the spell has its own proc, so Pendant of the Plague's explosions stop inflating Shadow Weaving's Hit.
+
 ## 1.3.2
 
 - A summon's attacks are grouped: Infernal: Melee and Hellfire sit indented under Infernal, with the summon's total on the top row and each attack keeping its own Hit, Crit and Avg.
