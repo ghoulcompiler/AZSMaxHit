@@ -2,7 +2,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/GhoulCompiler/AZSMaxHit)](https://github.com/GhoulCompiler/AZSMaxHit/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/GhoulCompiler/AZSMaxHit/total)](https://github.com/GhoulCompiler/AZSMaxHit/releases)
-[![Tested with game 0.132.0](https://img.shields.io/badge/tested%20with%20game-0.132.0-brightgreen)](CHANGELOG.md)
+[![Tested with game 0.135.1](https://img.shields.io/badge/tested%20with%20game-0.135.1-brightgreen)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 An addon for [Azeroth Survivors](https://wow.aethus.pl/) that shows each ability's **biggest hit**, **biggest crit**, **burst** and **total damage** for the current run.
@@ -25,7 +25,7 @@ Damage meters tell you which ability did the most damage overall. AZS Max Hit te
 - **Fresh every run:** the window clears by itself when a new run starts. Nothing from past runs is kept.
 - **Resizable:** drag the grip in the bottom-right corner to set the height; scroll with the mouse wheel.
 
-Pure Lua (`.toc` and `.lua` only): no DLLs or executables. Works in the browser and desktop editions. Tested with game version **0.132.0**.
+Pure Lua (`.toc` and `.lua` only): no DLLs or executables. Works in the browser and desktop editions. Tested with game version **0.135.1**.
 
 ## Co-op
 
