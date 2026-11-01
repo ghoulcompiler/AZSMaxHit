@@ -515,7 +515,11 @@ local function record(book, spell, amount, crit, target, at, evt, line)
 		book.spells[spell] = r
 	end
 	if crit then
-		if amount > (r.maxCrit or 0) then r.maxCrit = amount end
+		if amount > (r.maxCrit or 0) then
+			r.maxCrit = amount
+			r.critAt = at
+			r.critTarget = target
+		end
 		r.crits = (r.crits or 0) + 1
 	else
 		if amount > (r.maxHit or 0) then r.maxHit = amount end
@@ -610,6 +614,205 @@ end
 -- meter tells which proc they were (AZSMaxHit_PlaceDirect).
 AZSMaxHit_pending = {}
 
+-- Shadow Weaving strikes for 0.5% of the target's maximum health and is logged under the
+-- spell that triggered it, so its size repeats per enemy across spells. Sizes are learned
+-- from strikes matched on tick-only spells, then Mind Blast and other direct hits of the
+-- same size on the same enemy can be told apart from the spell's own hits.
+AZSMaxHit_weavingSizes = {}
+
+function AZSMaxHit_NoteWeaving(target, amount)
+	if not target then
+		return
+	end
+	local sizes = AZSMaxHit_weavingSizes[target]
+	if not sizes then
+		sizes = {}
+		AZSMaxHit_weavingSizes[target] = sizes
+	end
+	sizes[amount] = true
+end
+
+-- On a spell that also hits directly, only sizes above its biggest crit count: on weak
+-- enemies a strike and a real hit can be the same small number, and smaller strikes
+-- don't make Hit wrong.
+function AZSMaxHit_IsWeavingStrike(book, spell, target, amount, msg)
+	local sizes = target and AZSMaxHit_weavingSizes[target]
+	if not (sizes and sizes[amount] and book.spells["@proc:Shadow Weaving"]
+			and string.find(msg, " Shadow damage", 1, true)) then
+		return false
+	end
+	if AZSMaxHit_IsDotOnly(spell) then
+		return true
+	end
+	local r = book.spells[spell]
+	return r and AZSMaxHit_AboveCrit(r, amount) or false
+end
+
+-- A strike can land before its size is known, so a spell's biggest normal hits are kept
+-- with their enemy. Once the size is known they move to Weaving, and Hit falls back to
+-- the next biggest. Burst can't be undone this way and may stay a little high.
+function AZSMaxHit_NoteTop(r, amount, target, at, evt, line)
+	if not r.topHits then
+		r.topHits = {}
+	end
+	local top = r.topHits
+	local n = table.getn(top)
+	local i
+	for i = 1, n do
+		if top[i].amount == amount and top[i].target == target then
+			top[i].n = top[i].n + 1
+			return
+		end
+	end
+	if n >= 20 then
+		local last = top[n]
+		if amount <= last.amount then
+			r.topFloor = math.max(r.topFloor or 0, amount)
+			return
+		end
+		r.topFloor = math.max(r.topFloor or 0, last.amount)
+		table.remove(top)
+	end
+	table.insert(top, { amount = amount, target = target, at = at, evt = evt, line = line, n = 1 })
+	table.sort(top, function(a, b) return a.amount > b.amount end)
+end
+
+function AZSMaxHit_RedoTop(r)
+	local first
+	local i
+	for i = 1, table.getn(r.topHits) do
+		if not r.topHits[i].strike then
+			first = r.topHits[i]
+			break
+		end
+	end
+	local hit = first and first.amount or r.topFloor or 0
+	r.maxHit = hit > 0 and hit or nil
+	if (r.maxCrit or 0) > 0 and r.maxCrit >= hit then
+		r.max, r.crit, r.target, r.at = r.maxCrit, true, r.critTarget, r.critAt
+	elseif first then
+		r.max, r.crit, r.target, r.at = hit, false, first.target, first.at
+	elseif hit > 0 then
+		r.max, r.crit = hit, false -- only known as a size: its enemy and time are gone
+	else
+		r.max, r.crit, r.target, r.at = 0, nil, nil, nil
+	end
+end
+
+function AZSMaxHit_MoveToWeaving(book, r, target, amount)
+	local top = r.topHits
+	if not top then
+		return
+	end
+	local i
+	for i = 1, table.getn(top) do
+		local e = top[i]
+		if e.amount == amount and e.target == target then
+			if AZSMaxHit_AboveCrit(r, amount) then
+				table.remove(top, i)
+				r.hits = r.hits - e.n
+				r.total = r.total - amount * e.n
+				local k
+				for k = 1, e.n do
+					record(book, "@proc:Shadow Weaving", amount, false, target, e.at, e.evt, e.line)
+				end
+			else
+				-- Too small to move safely, since a real hit can be the same size. It stays
+				-- in Avg and Hits, where one wrong match costs little, but can't be Hit.
+				e.strike = true
+			end
+			AZSMaxHit_RedoTop(r)
+			return
+		end
+	end
+end
+
+-- The Weaving row must exist in `book`.
+function AZSMaxHit_LearnWeaving(book, target, amount)
+	local sizes = target and AZSMaxHit_weavingSizes[target]
+	if sizes and sizes[amount] then
+		return
+	end
+	AZSMaxHit_NoteWeaving(target, amount)
+	local spell, r
+	for spell, r in pairs(book.spells) do
+		if string.sub(spell, 1, 6) ~= "@proc:" then
+			AZSMaxHit_MoveToWeaving(book, r, target, amount)
+		end
+	end
+end
+
+function AZSMaxHit_AboveCrit(r, amount)
+	return (r.maxCrit or 0) > 0 and amount > r.maxCrit
+end
+
+function AZSMaxHit_WeavingRow(book, spell)
+	if not book.spells["@proc:Shadow Weaving"] then
+		book.spells["@proc:Shadow Weaving"] = { max = 0, extraOf = spell, label = "Shadow Weaving" }
+	end
+end
+
+-- Moves the spell's biggest normal hits that are strikes: a size known for that enemy, or
+-- one that no real hit could reach. A normal hit is about half a crit, so with a few crits
+-- seen, a hit 1.5x the biggest crit is about 3x the spell's real size. A boss that only one
+-- spell hits gets found this way (Mind Flay on Sir Zeliek: Hit 2,431, Crit 1,000).
+function AZSMaxHit_SweepTop(book, spell, r)
+	local top = r.topHits
+	while top and top[1] do
+		local e = top[1]
+		local sizes = AZSMaxHit_weavingSizes[e.target]
+		local known = sizes and sizes[e.amount]
+		local tooBig = (r.crits or 0) >= 5 and e.amount > (r.maxCrit or 0) * 1.5
+		if not (AZSMaxHit_AboveCrit(r, e.amount) and (known or tooBig)) then
+			return
+		end
+		AZSMaxHit_WeavingRow(book, spell)
+		if known then
+			AZSMaxHit_MoveToWeaving(book, r, e.target, e.amount)
+		else
+			AZSMaxHit_LearnWeaving(book, e.target, e.amount)
+		end
+	end
+end
+
+-- Called for a direct hit. Two spells landing the same size on the same enemy is also
+-- a strike, but small real hits can match by chance, so only sizes above both spells'
+-- biggest crits count: those are the ones that make Hit wrong.
+function AZSMaxHit_AfterDirectHit(book, spell, amount, crit, target, at, evt, msg)
+	if not target or string.sub(spell, 1, 6) == "@proc:" or UnitClass("player") ~= "Priest"
+			or not string.find(msg, " Shadow damage", 1, true) then
+		return
+	end
+	local r = book.spells[spell]
+	if not crit then
+		AZSMaxHit_NoteTop(r, amount, target, at, evt, msg)
+		local sizes = AZSMaxHit_weavingSizes[target]
+		if sizes and sizes[amount] then
+			AZSMaxHit_MoveToWeaving(book, r, target, amount)
+		end
+	end
+	if (AZSMaxHit_ProcTotal("Shadow Weaving") or 0) <= 0 then
+		return
+	end
+	if not crit and AZSMaxHit_AboveCrit(r, amount) then
+		local other, o
+		for other, o in pairs(book.spells) do
+			if other ~= spell and string.sub(other, 1, 6) ~= "@proc:" and AZSMaxHit_AboveCrit(o, amount) then
+				local i
+				for i = 1, table.getn(o.topHits or {}) do
+					if o.topHits[i].amount == amount and o.topHits[i].target == target then
+						AZSMaxHit_WeavingRow(book, spell)
+						AZSMaxHit_LearnWeaving(book, target, amount)
+						return
+					end
+				end
+			end
+		end
+	end
+	-- A crit can also show that a hit kept earlier was too big, so this runs for both.
+	AZSMaxHit_SweepTop(book, spell, r)
+end
+
 function AZSMaxHit_HoldDirect(book, spell, amount, crit, target, at, t)
 	if not book.spells[spell] then
 		book.spells[spell] = { max = 0 } -- the spell's row, even before its first tick
@@ -662,6 +865,9 @@ local function ingest(msg, kind, evt)
 			book.spells[spell] = { max = 0, extraOf = parent, label = item }
 		end
 	end
+	if kind == "yours" and not crit and AZSMaxHit_IsWeavingStrike(book, spell, target, amount, msg) then
+		spell = "@proc:Shadow Weaving"
+	end
 	if kind == "yours" and AZSMaxHit_IsDotOnly(spell) then
 		AZSMaxHit_HoldDirect(book, spell, amount, crit, target, at, t)
 		recordTotalBurst(book, pushWindow(windowsFor(ME).total, t, amount), at)
@@ -669,6 +875,9 @@ local function ingest(msg, kind, evt)
 		return
 	end
 	record(book, spell, amount, crit, target, at)
+	if kind == "yours" then
+		AZSMaxHit_AfterDirectHit(book, spell, amount, crit, target, at, evt, msg)
+	end
 
 	local hw = windowsFor(ME)
 	local sw = hw.spells[spell]
@@ -967,6 +1176,9 @@ function AZSMaxHit_PlaceDirect(procs)
 				book.spells[key] = { max = 0, extraOf = h.spell, label = label }
 			end
 			record(book, key, h.amount, h.crit, h.target, h.at, h.evt, h.line)
+			if key == "@proc:Shadow Weaving" and not h.crit then
+				AZSMaxHit_LearnWeaving(book, h.target, h.amount)
+			end
 			local hw = windowsFor(ME)
 			local sw = hw.spells[key]
 			if not sw then
@@ -985,6 +1197,7 @@ end
 
 function AZSMaxHit_ResetDirect()
 	AZSMaxHit_pending = {}
+	AZSMaxHit_weavingSizes = {}
 	procLast, procCredit = {}, {}
 end
 
@@ -1471,7 +1684,7 @@ function AZSMaxHit_RefreshParty()
 		setTile(tiles[1], "TOP DPS", "|cff777777-|r")
 	end
 	setTile(tiles[2], "PARTY DPS", dps > 0 and fmt(dps) or "|cff777777-|r")
-	setTile(tiles[3], "PARTY TOTAL", total > 0 and fmt(total) or "|cff777777-|r")
+	setTile(tiles[3], "PARTY TOTAL", total > 0 and AZSMaxHit_FmtShort(total) or "|cff777777-|r")
 	setTile(tiles[4], nil, nil)
 
 	for i = 1, ROWS do
@@ -1593,7 +1806,7 @@ end
 function AZSMaxHit_TotalTiles(logTotal)
 	local landed = (selected == ME) and AZSMaxHit_meterSum or 0
 	if landed and landed > 0 then
-		setTile(tiles[3], "TOTAL", fmt(landed))
+		setTile(tiles[3], "TOTAL", AZSMaxHit_FmtShort(landed))
 		-- Pet hits aren't in the combat log, so they can't be part of the gap.
 		local over = logTotal - (landed - (AZSMaxHit_ProcTotal("Pets") or 0))
 		if over > 0 then
@@ -1603,7 +1816,7 @@ function AZSMaxHit_TotalTiles(logTotal)
 			setTile(tiles[4], "OVERKILL", "|cff777777-|r")
 		end
 	else
-		setTile(tiles[3], "TOTAL", logTotal > 0 and fmt(logTotal) or "|cff777777-|r")
+		setTile(tiles[3], "TOTAL", logTotal > 0 and AZSMaxHit_FmtShort(logTotal) or "|cff777777-|r")
 		setTile(tiles[4], nil, nil)
 	end
 end
@@ -1743,7 +1956,7 @@ local function refresh()
 	end
 	local burst = book.burst.amount
 	setTile(tiles[2], "BURST" .. (book.burst.at and db.showAt and ("  |cff777777at " .. fmtTime(book.burst.at) .. "|r") or ""),
-		burst and fmt(burst) or "|cff777777-|r")
+		burst and AZSMaxHit_FmtShort(burst) or "|cff777777-|r")
 	AZSMaxHit_TotalTiles(grand)
 
 	-- Rows
@@ -1866,6 +2079,25 @@ local function savePos()
 	end
 end
 
+-- Offsets are in the window's own scale, so its corner is converted to stay in place.
+function AZSMaxHit_SetScale(value)
+	local scale = tonumber(value)
+	if not scale or scale < 0.6 or scale > 1.5 then
+		return false
+	end
+	local old = frame:GetScale() or 1
+	local left, topY = frame:GetLeft(), frame:GetTop()
+	frame:SetScale(scale)
+	db.scale = scale
+	if left and topY then
+		local x, y = left * old / scale, topY * old / scale
+		frame:ClearAllPoints()
+		frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x, y)
+		db.pos = { point = "TOPLEFT", relPoint = "BOTTOMLEFT", x = x, y = y }
+	end
+	return true
+end
+
 local headerCells = {}
 local function paintHeaders()
 	local i
@@ -1936,6 +2168,10 @@ function AZSMaxHit_ApplyColumns()
 		end
 		AZSMaxHit_ShowCells(rows[i], false)
 	end
+	-- With times on, BURST's label needs room for "at 12:34".
+	AZSMaxHit_MoveTile(tiles[2], 258, db.showAt and 92 or 60)
+	AZSMaxHit_MoveTile(tiles[3], db.showAt and 352 or 320, 72)
+	AZSMaxHit_MoveTile(tiles[4], 392 + extra, 102)
 	paintHeaders()
 end
 
@@ -1953,6 +2189,15 @@ local function makeTile(x, width)
 	tile.value:SetJustifyH("LEFT")
 	pcall(tile.value.SetFont, tile.value, "Fonts\\FRIZQT__.TTF", 15)
 	return tile
+end
+
+function AZSMaxHit_MoveTile(tile, x, width)
+	tile.label:ClearAllPoints()
+	tile.label:SetPoint("TOPLEFT", frame, "TOPLEFT", x, SUMMARY_Y)
+	tile.label:SetWidth(width)
+	tile.value:ClearAllPoints()
+	tile.value:SetPoint("TOPLEFT", frame, "TOPLEFT", x, SUMMARY_Y - 13)
+	tile.value:SetWidth(width)
 end
 
 -- Scrollbar and resize grip (kept apart from createUI: Lua 5.0 allows
@@ -2031,6 +2276,7 @@ local function createUI()
 	frame = CreateFrame("Frame", "AZSMaxHitFrame", UIParent)
 	frame:SetWidth(WIDTH)
 	frame:SetHeight(db.height or DEFAULT_HEIGHT)
+	frame:SetScale(db.scale or 1)
 	frame:SetFrameStrata("MEDIUM")
 	frame:SetClampedToScreen(true)
 	frame:SetBackdrop({
@@ -2097,9 +2343,9 @@ local function createUI()
 
 	-- Summary strip
 	tiles = {
-		makeTile(PAD + 2, 198),
-		makeTile(212, 80),
-		makeTile(294, 96),
+		makeTile(PAD + 2, 246),
+		makeTile(258, 60),
+		makeTile(320, 72),
 		makeTile(392, 102),
 	}
 
@@ -2563,6 +2809,13 @@ SlashCmdList["AZSMAXHIT"] = function(msg)
 	if msg == "reset" then
 		resetRun()
 		refresh()
+	elseif string.find(msg, "^scale") then
+		local _, _, value = string.find(msg, "^scale%s+(.+)$")
+		if value and AZSMaxHit_SetScale(value) then
+			say("window scale " .. db.scale .. ".")
+		else
+			say("window scale is " .. (db.scale or 1) .. ". Use /maxhit scale 0.6 to 1.5, for example /maxhit scale 0.8.")
+		end
 	elseif msg == "lock" then
 		db.locked = not db.locked
 		say(db.locked and "window locked." or "window unlocked.")
@@ -2623,6 +2876,7 @@ SlashCmdList["AZSMAXHIT"] = function(msg)
 		say("/maxhit - show or hide the window")
 		say("/maxhit reset - clear the numbers (they also clear by themselves at every new run)")
 		say("/maxhit lock - lock the window;  /maxhit icons - icons on/off;  /maxhit at - times of top hits on/off")
+		say("/maxhit scale 0.8 - make the whole window smaller or bigger (0.6 to 1.5)")
 		say("/maxhit meter - list what the game's meter reports, and abilities still missing an icon")
 		say("/maxhit party - list what the game's party meter reports (co-op)")
 		say("/maxhit top - the game's exact message for each ability's biggest hits")

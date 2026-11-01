@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.4
+
+- Priest: Shadow Weaving strikes logged under Mind Blast, Psychic Scream, Mind Flay and other Shadow spells now move to the Shadow Weaving row when they are bigger than the spell's biggest crit, including ones that landed earlier in the run. Smaller strikes of a size already seen on that enemy no longer set the spell's Hit either, so Hit gets closer to its real number and should less often beat Crit. Those smaller strikes still count in the spell's Avg and Hits, Shadowy Apparitions still count under Mind Blast, and Burst can stay a little high.
+- New `/maxhit scale` command makes the whole window smaller or bigger, from 0.6 to 1.5, for example `/maxhit scale 0.8`. The setting is remembered.
+- The BURST, TOTAL and PARTY TOTAL tiles now use short numbers like 388K and 16.49M. TOP HIT keeps the full number and has more room for the ability's name.
+
 ## 1.3.3
 
 - Big hits that mostly overkill now go to the proc that caused them, when a damage-over-time spell has exactly one proc under it. For example, Pendant of the Plague's explosions no longer end up in an "Other hits" row under Devouring Plague.

@@ -23,7 +23,7 @@ Damage meters tell you which ability did the most damage overall. AZS Max Hit te
 - **Fill bars** show at a glance which abilities do the most damage, colored by damage school (Shadow, Fire, Frost, ...).
 - **Icons** from your spellbook, talents, items and the game's own meter.
 - **Fresh every run:** the window clears by itself when a new run starts. Nothing from past runs is kept.
-- **Resizable:** drag the grip in the bottom-right corner to set the height; scroll with the mouse wheel.
+- **Resizable:** drag the grip in the bottom-right corner to set the height, and use `/maxhit scale` to shrink or enlarge the whole window; scroll with the mouse wheel.
 
 Pure Lua (`.toc` and `.lua` only): no DLLs or executables. Works in the browser and desktop editions. Tested with game version **0.135.1**.
 
@@ -70,6 +70,7 @@ The addon reads the damage the game reports, so turn these on in **Options → C
 | `/maxhit` or `/mh` | Show or hide the window |
 | `/maxhit reset` | Clear the numbers now (they also clear by themselves at every new run) |
 | `/maxhit lock` | Lock the window's position and size |
+| `/maxhit scale 0.8` | Make the whole window smaller or bigger, from 0.6 to 1.5 (normal size is 1) |
 | `/maxhit icons` | Icons on or off |
 | `/maxhit at` | Show or hide when top hits and bursts happened: the At column and the times in the summary (off by default) |
 | `/maxhit meter` | List what the game's own meter reports, and abilities still missing an icon |
@@ -94,8 +95,8 @@ The addon reads the damage the game reports, so turn these on in **Options → C
 
 - **Empty window, or DoTs and pets missing?** Check the [game settings](#game-settings).
 - The addon reads the combat log, which is in **English**. A game set to another language may need its own patterns; open an issue if that's you.
-- **An ability's row includes its procs.** The combat log reports proc hits under the triggering spell's name (Shadowy Apparitions as Mind Blast, Pendant of the Plague ticks as Shadow Word: Pain), so an ability's Hit, Crit, Burst and Hits include them. Total doesn't: it comes from the game's meter, which keeps procs apart, and the indented rows show each proc's own total. Procs the addon can't place under an ability, like Shadow Weaving, get a grayed row of their own. The talent-to-spell list covers all nine classes and comes from the talent tooltips; if a proc that casts one spell still shows on its own row, please [open an issue](https://github.com/GhoulCompiler/AZSMaxHit/issues) with the output of `/maxhit meter`.
-- **Damage-over-time spells** (Shadow Word: Pain, Devouring Plague, Serpent Sting, Rend, ...) show only their own ticks. Other hits the game logs under their name, like Shadow Weaving strikes or Pendant of the Plague's explosion, are matched to the right proc row by watching which proc's total in the game's meter went up, so those procs get real Hit and Crit numbers. Hits that can't be matched show as **Other hits** under the spell. Spells that hit directly anyway, like Mind Blast, can't be split this way.
+- **An ability's row includes its procs.** The combat log reports proc hits under the triggering spell's name (Shadowy Apparitions as Mind Blast, Pendant of the Plague ticks as Shadow Word: Pain), so an ability's Hit, Crit, Burst and Hits include them. That's why Hit can be higher than Crit: Mind Blast's biggest "hit" may really be a Shadow Weaving strike. Total doesn't include them: it comes from the game's meter, which keeps procs apart, and the indented rows show each proc's own total. Procs the addon can't place under an ability, like Shadow Weaving, get a grayed row of their own. The talent-to-spell list covers all nine classes and comes from the talent tooltips; if a proc that casts one spell still shows on its own row, please [open an issue](https://github.com/GhoulCompiler/AZSMaxHit/issues) with the output of `/maxhit meter`.
+- **Damage-over-time spells** (Shadow Word: Pain, Devouring Plague, Serpent Sting, Rend, ...) show only their own ticks. Other hits the game logs under their name, like Shadow Weaving strikes or Pendant of the Plague's explosion, are matched to the right proc row by watching which proc's total in the game's meter went up, so those procs get real Hit and Crit numbers. Hits that can't be matched show as **Other hits** under the spell. Spells that hit directly anyway, like Mind Blast, can't be split this way. The exception is Shadow Weaving, whose strikes have a fixed size per enemy: strikes logged under Mind Blast and other Shadow spells move to its row when they are bigger than that spell's biggest crit. Smaller ones stay in the spell's Avg and Hits, but sizes already seen on that enemy don't count as its Hit.
 - **Overkill** is the gap between the combat log, which counts every hit in full, and the game's meter, which counts only the health enemies lost. It's an estimate.
 - **Max hits are yours only.** The game doesn't send a partner's hits to your combat log, so the Party tab uses the game's party meter: total, DPS, share and top ability for each hero.
 
