@@ -27,6 +27,8 @@ Damage meters tell you which ability did the most damage overall. AZS Max Hit te
 
 Pure Lua (`.toc` and `.lua` only): no DLLs or executables. Works in the browser and desktop editions. Tested with game version **0.135.1**.
 
+The addon raises the game's combat log range settings to 200, so hits on distant enemies are recorded. It changes nothing else in the game.
+
 ## Co-op
 
 In co-op, two tabs appear under the summary: one with your name for your own abilities, and **Party** to compare everyone.
