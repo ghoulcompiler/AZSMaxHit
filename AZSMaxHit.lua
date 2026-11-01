@@ -13,6 +13,8 @@ local TAB_H = 18
 local WIDTH = 550
 local ME = "@me"          -- key for your own data, whatever your hero is called
 local SOLID = "Interface\\Buttons\\WHITE8X8"
+local BAR_W = 208          -- fill bars: from the row's left edge to the Total column
+local PARTY_BAR_W = 142    -- fill bars in the Party tab: the Hero column
 local BURST_WINDOW = 1.0   -- seconds
 
 local db            -- AZSMaxHitDB (settings, icons and window position only)
@@ -66,6 +68,15 @@ local function fmt(n)
 		s, k = string.gsub(s, "^(%d+)(%d%d%d)", "%1,%2")
 	until k == 0
 	return s
+end
+
+function AZSMaxHit_FmtShort(n)
+	if n >= 1000000 then
+		return string.format("%.1fM", n / 1000000)
+	elseif n >= 1000 then
+		return string.format("%.0fk", n / 1000)
+	end
+	return tostring(math.floor(n + 0.5))
 end
 
 local function fmtTime(t)
@@ -158,6 +169,31 @@ local FALLBACK_ICONS = {
 	["Shadowy Apparitions"] = ICON_DIR .. "Spell_Shadow_Haunting",
 	["Shadowform"] = ICON_DIR .. "Spell_Shadow_Shadowform",
 	["Shadow Weaving"] = ICON_DIR .. "Spell_Shadow_BlackPlague",
+	["Seed of Corruption"] = ICON_DIR .. "Spell_Shadow_CurseOfMannoroth",
+	["Thorns"] = ICON_DIR .. "Spell_Nature_Thorns",
+	["Fireball"] = ICON_DIR .. "Spell_Fire_FlameBolt",       -- also cast by non-Mages (Imp, upgrades)
+	["Frostbolt"] = ICON_DIR .. "Spell_Frost_FrostBolt02",
+	["Fire Blast"] = ICON_DIR .. "Spell_Fire_Fireball",
+	["Blizzard"] = ICON_DIR .. "Spell_Frost_IceStorm",
+	["Pyroclasm"] = ICON_DIR .. "Spell_Fire_Fireball02",
+	["Rampage"] = ICON_DIR .. "Spell_Shadow_UnholyFrenzy",
+	["Omen of Clarity"] = ICON_DIR .. "Spell_Nature_CrystalBall",
+	["Killing Spree"] = ICON_DIR .. "Ability_Rogue_Sprint",
+	["Divine Storm"] = ICON_DIR .. "Spell_Holy_SealOfRighteousness",
+	["Piercing Shots"] = ICON_DIR .. "Ability_PierceDamage",
+	-- Jewelry whose procs the game's meter lists as "Item: Spell".
+	["Eye of the Splitting Sky"] = ICON_DIR .. "INV_Jewelry_Necklace_16",
+	["Stormcaller's Amulet"] = ICON_DIR .. "INV_Jewelry_Necklace_AhnQiraj_02",
+	["Heart of the Earthshaker"] = ICON_DIR .. "INV_Jewelry_Necklace_AhnQiraj_03",
+	["Amulet of the Inferno"] = ICON_DIR .. "INV_Jewelry_Necklace_AhnQiraj_04",
+	["Talisman of the Tempest"] = ICON_DIR .. "INV_Jewelry_Necklace_30Naxxramas",
+	["Medallion of the Bladestorm"] = ICON_DIR .. "INV_Jewelry_Necklace_18",
+	["Pendant of the Plague"] = ICON_DIR .. "INV_Jewelry_Necklace_28Naxxramas",
+	["The Reaper's Amulet"] = ICON_DIR .. "INV_Jewelry_Necklace_27Naxxramas",
+	["Breath of the Black Dragon"] = ICON_DIR .. "INV_Jewelry_Necklace_19",
+	["The Eternal Talisman"] = ICON_DIR .. "INV_Jewelry_Necklace_21",
+	["The Legionlord's Medallion"] = ICON_DIR .. "INV_Jewelry_Necklace_13",
+	["Amulet of the Ancients"] = ICON_DIR .. "INV_Jewelry_Necklace_23",
 }
 
 local function asTexture(tex)
@@ -388,8 +424,61 @@ local function runBook(who)
 	return book
 end
 
+-- For /maxhit top: per kind of combat-log event, how many hits a spell had, the
+-- biggest one, and the game's exact message for it. Tells direct hits apart from
+-- damage over time (an item explosion logged under a DoT's name, for example).
+function AZSMaxHit_NoteSource(r, amount, evt, line)
+	local kind = evt or event or "?"
+	line = line or arg1
+	r.src = r.src or {}
+	local s = r.src[kind]
+	if not s then
+		s = { n = 0, max = 0 }
+		r.src[kind] = s
+	end
+	s.n = s.n + 1
+	-- Damage school: "... for 408 Shadow damage." / "suffers 408 Shadow damage
+	-- from ...". Melee and pet swings name none: Physical.
+	if type(line) == "string" then
+		local _, _, school = string.find(line, "%d (%a+) damage")
+		r.school = school or r.school or "Physical"
+	end
+	if amount > s.max then
+		s.max = amount
+		s.line = line
+	end
+end
+
+function AZSMaxHit_DumpTop(book, say)
+	local list = {}
+	local spell, r
+	for spell, r in pairs(book.spells) do
+		table.insert(list, { name = spell, r = r })
+	end
+	table.sort(list, function(a, b) return (a.r.max or 0) > (b.r.max or 0) end)
+	if table.getn(list) == 0 then
+		say("no hits yet this run.")
+		return
+	end
+	say("biggest hit of each ability, by kind of combat-log message:")
+	local i
+	for i = 1, math.min(10, table.getn(list)) do
+		local item = list[i]
+		local kind, s
+		local shown = item.r.label or item.name
+		if item.r.extraOf and string.sub(item.name, 1, 6) == "@proc:" then
+			shown = shown .. " (matched from " .. item.r.extraOf .. ")"
+		end
+		for kind, s in pairs(item.r.src or {}) do
+			local short = string.gsub(kind, "^CHAT_MSG_", "")
+			say(shown .. " |cff999999[" .. short .. "]|r " .. s.n .. " hits, biggest " .. s.max
+				.. ": |cffcccccc" .. tostring(s.line) .. "|r")
+		end
+	end
+end
+
 -- Returns true when this hit is a new top hit for the spell in that book.
-local function record(book, spell, amount, crit, target, at)
+local function record(book, spell, amount, crit, target, at, evt, line)
 	local r = book.spells[spell]
 	if not r then
 		r = { max = 0 }
@@ -403,6 +492,7 @@ local function record(book, spell, amount, crit, target, at)
 	end
 	r.hits = (r.hits or 0) + 1
 	r.total = (r.total or 0) + amount
+	AZSMaxHit_NoteSource(r, amount, evt, line)
 	if amount > (r.max or 0) then
 		r.max = amount
 		r.crit = crit
@@ -426,6 +516,43 @@ local function recordTotalBurst(book, sum, at)
 		book.burst.amount = sum
 		book.burst.at = at
 	end
+end
+
+-- Spells that only deal damage over time. A direct "Your X hits ..." under one
+-- of these names is something else the game logs under it: Shadow Weaving
+-- strikes, an item's explosion (Pendant of the Plague). Those hits get a row of
+-- their own, indented under the spell, so the spell's Hit and Avg are its ticks.
+local DOT_ONLY = {
+	["Shadow Word: Pain"] = true, ["Devouring Plague"] = true,
+	-- Not Corruption or Curse of Agony: seen in game, they also hit when cast.
+	["Serpent Sting"] = true, ["Rend"] = true, ["Deep Wounds"] = true,
+	["Rupture"] = true, ["Garrote"] = true, ["Rip"] = true,
+	["Insect Swarm"] = true, ["Ignite"] = true,
+}
+
+function AZSMaxHit_IsDotOnly(spell)
+	return DOT_ONLY[spell]
+end
+
+-- Direct hits under a DoT's name wait here until the next read of the game's
+-- meter tells which proc they were (AZSMaxHit_PlaceDirect).
+AZSMaxHit_pending = {}
+
+function AZSMaxHit_HoldDirect(book, spell, amount, crit, target, at, t)
+	if not book.spells[spell] then
+		book.spells[spell] = { max = 0 } -- the spell's row, even before its first tick
+	end
+	if not AZS_GetMeter then
+		-- No game meter to match against: straight to the spell's Other hits row.
+		local key = spell .. " (other)"
+		if not book.spells[key] then
+			book.spells[key] = { max = 0, extraOf = spell, label = spell .. " (other hits)" }
+		end
+		record(book, key, amount, crit, target, at)
+		return
+	end
+	table.insert(AZSMaxHit_pending, { spell = spell, amount = amount, crit = crit, target = target,
+		at = at, t = t, age = 0, evt = event, line = arg1 })
 end
 
 local function ingest(msg, kind, evt)
@@ -453,6 +580,12 @@ local function ingest(msg, kind, evt)
 	local at = runTime()
 	local t = now()
 	local book = run
+	if kind == "yours" and AZSMaxHit_IsDotOnly(spell) then
+		AZSMaxHit_HoldDirect(book, spell, amount, crit, target, at, t)
+		recordTotalBurst(book, pushWindow(windowsFor(ME).total, t, amount), at)
+		dirty = true
+		return
+	end
 	record(book, spell, amount, crit, target, at)
 
 	local hw = windowsFor(ME)
@@ -473,6 +606,13 @@ local function resetRun(quiet)
 		procBase[meterProcs[i].name] = meterProcs[i].raw
 	end
 	meterProcs = {}
+	local name, raw
+	for name, raw in pairs(AZSMaxHit_meterRaw or {}) do
+		procBase[name] = raw
+	end
+	AZSMaxHit_meterOwn = {}
+	AZSMaxHit_meterSum = 0
+	AZSMaxHit_ResetDirect()
 	db.run = { players = {} }
 	run = runBook(ME)
 	resetWindows()
@@ -489,7 +629,7 @@ end
 
 -- Each column: sort key, header, right edge, width, value, text, ascending sort
 local function avgOf(r)
-	if (r.hits or 0) > 0 then return (r.total or 0) / r.hits end
+	if (r.hits or 0) > 0 then return (r.logTotal or r.total or 0) / r.hits end -- combat-log hits
 	return 0
 end
 local function critPctOf(r)
@@ -574,6 +714,7 @@ local PROC_PARENT = {
 	["Legion Gate"] = "Death Coil",              -- "kills trigger a Death Coil"
 	["Rain of Chaos"] = "Rain of Fire",          -- "A second Rain of Fire falls"
 	["Corpse Explosion"] = "Seed of Corruption",
+	["Seed of Corruption"] = "Corpse Explosion", -- seen in game: Seed's bursts are logged as Corpse Explosion
 	-- Hunter
 	["Frenzy"] = "Multi-Shot",                   -- "a free Multi-Shot"
 	["Rapid Fire"] = "Aimed Shot",               -- "a free Aimed Shot"
@@ -632,6 +773,128 @@ local function procPlace(p, book)
 	return "alone", nil, p.name
 end
 
+-- Places held direct hits (see AZSMaxHit_HoldDirect) with the proc whose total
+-- in the game's meter went up since the last read: Pendant of the Plague under
+-- Devouring Plague, Shadow Weaving, ... Biggest hits go first, to the proc with
+-- the most new damage. A hit no proc accounts for after two reads goes to the
+-- spell's "Other hits" row. Called twice a second from the meter read.
+local procLast, procCredit = {}, {}
+
+function AZSMaxHit_PlaceDirect(procs)
+	local book = run
+	local i
+	-- New damage per proc since the last read; unused credit lasts one more read.
+	local credit = {}
+	for i = 1, table.getn(procs) do
+		local p = procs[i]
+		local delta = p.dmg - (procLast[p.name] or 0)
+		procLast[p.name] = p.dmg
+		if delta > 0 then
+			credit[p.name] = delta + (procCredit[p.name] or 0)
+		end
+	end
+	procCredit = credit
+	local pending = AZSMaxHit_pending
+	if table.getn(pending) == 0 then
+		return
+	end
+	table.sort(pending, function(a, b) return a.amount > b.amount end)
+	local keep = {}
+	for i = 1, table.getn(pending) do
+		local h = pending[i]
+		-- A proc fits when its new damage covers the hit. The meter counts only
+		-- damage that landed, so a hit may be up to 4x its new damage (overkill).
+		local best, bestCredit, bestLabel, bestFits = nil, 0, nil, false
+		local j
+		for j = 1, table.getn(procs) do
+			local p = procs[j]
+			local where, parent, label = procPlace(p, book)
+			local c = credit[p.name] or 0
+			if c > 0 and ((where == "child" and parent == h.spell) or where == "alone")
+					and h.amount <= c * 4 then
+				local fits = h.amount <= c
+				if (fits and not bestFits) or (fits == bestFits and c > bestCredit) then
+					best, bestCredit, bestLabel, bestFits = p.name, c, label, fits
+				end
+			end
+		end
+		local key, label
+		if best then
+			credit[best] = credit[best] - h.amount
+			key, label = "@proc:" .. best, bestLabel
+		elseif h.age >= 1 then
+			key, label = h.spell .. " (other)", h.spell .. " (other hits)"
+		end
+		if key then
+			if not book.spells[key] then
+				book.spells[key] = { max = 0, extraOf = h.spell, label = label }
+			end
+			record(book, key, h.amount, h.crit, h.target, h.at, h.evt, h.line)
+			local hw = windowsFor(ME)
+			local sw = hw.spells[key]
+			if not sw then
+				sw = newWindow()
+				hw.spells[key] = sw
+			end
+			recordBurst(book, key, pushWindow(sw, h.t, h.amount), h.at)
+			dirty = true
+		else
+			h.age = h.age + 1
+			table.insert(keep, h)
+		end
+	end
+	AZSMaxHit_pending = keep
+end
+
+function AZSMaxHit_ResetDirect()
+	AZSMaxHit_pending = {}
+	procLast, procCredit = {}, {}
+end
+
+-- Combat-log numbers for a proc row, when direct hits were placed with it.
+function AZSMaxHit_ProcStats(book, procName)
+	return book.spells["@proc:" .. procName]
+end
+
+-- Proc damage the game's meter puts under each spell, by spell name.
+function AZSMaxHit_KidSums(book)
+	local sums = {}
+	local i
+	for i = 1, table.getn(meterProcs) do
+		local p = meterProcs[i]
+		if p.dmg > 0 then
+			local where, parent = procPlace(p, book)
+			if where == "child" then
+				sums[parent] = (sums[parent] or 0) + p.dmg
+			end
+		end
+	end
+	return sums
+end
+
+-- A spell's row as shown: Total is the spell's own damage from the game's meter
+-- (no procs, no overkill) when the meter has a line for it; everything else
+-- comes from the combat log. `group` adds the procs under it, for sorting.
+-- A spell the meter doesn't list (Corpse Explosion: the meter calls it
+-- Shadowform) keeps its combat-log total, and its procs aren't added again.
+-- Abilities the combat log names by spell but the game's meter by caster.
+local OWN_ALIAS = {
+	["Fireball"] = "imp", -- a Warlock's Imp: "Your Fireball hits", meter line "Imp"
+}
+
+function AZSMaxHit_OwnView(spell, r, mine, kids)
+	local meter = mine and AZSMaxHit_meterOwn
+	local own = meter and meter[string.lower(spell)]
+	if not own and meter and OWN_ALIAS[spell] then
+		own = meter[OWN_ALIAS[spell]]
+	end
+	if not own then
+		return r, r.total or 0
+	end
+	local view = setmetatable({ total = own, logTotal = r.total }, { __index = r })
+	return view, own + (kids[spell] or 0)
+end
+
 -- Puts each spell's procs right after it, biggest first.
 function AZSMaxHit_ExpandProcs(list, book)
 	local kids = {}
@@ -661,6 +924,11 @@ function AZSMaxHit_ExpandProcs(list, book)
 			item.grand = grand
 		end
 		table.insert(out, item)
+		local extra = not item.procOnly and book.spells[item.name .. " (other)"]
+		if extra and (extra.hits or 0) > 0 then
+			table.insert(out, { name = item.name .. " (other)", label = "Other hits", r = extra,
+				extra = true, parent = item.name })
+		end
 		local k = kids[item.name]
 		if k then
 			table.sort(k, function(a, b) return a.dmg > b.dmg end)
@@ -677,11 +945,20 @@ local function sorted()
 	local book = currentBook()
 	local col = columnByKey(sortKey)
 	local list = {}
+	local mine = selected == ME
+	local kids = mine and AZSMaxHit_KidSums(book) or {}
 	local spell, r
 	for spell, r in pairs(book.spells) do
-		table.insert(list, { name = spell, r = r, v = col.value(r), m = r.max or 0 })
+		if r.extraOf then
+			-- shown under its spell by AZSMaxHit_ExpandProcs
+		else
+		local view, group = AZSMaxHit_OwnView(spell, r, mine, kids)
+		local v = col.value(view)
+		if col.key == "total" then v = group end
+		table.insert(list, { name = spell, r = view, v = v, m = r.max or 0 })
+		end
 	end
-	if selected == ME and next(book.spells) then
+	if mine and next(book.spells) then
 		local i
 		for i = 1, table.getn(meterProcs) do
 			local p = meterProcs[i]
@@ -876,10 +1153,11 @@ function AZSMaxHit_RefreshParty()
 	if offset > n - visibleRows then offset = n - visibleRows end
 	if offset < 0 then offset = 0 end
 
-	local total, dps, best = 0, 0, nil
+	local total, dps, best, most = 0, 0, nil, 0
 	local i
 	for i = 1, n do
 		local h = party[i]
+		if h.dmg > most then most = h.dmg end
 		total = total + h.dmg
 		dps = dps + h.dps
 		if not best or h.dps > best.dps then
@@ -900,6 +1178,8 @@ function AZSMaxHit_RefreshParty()
 		local h = i <= visibleRows and party[i + offset]
 		if h then
 			AZSMaxHit_Indent(row, 0)
+			local pr, pg, pb = classColor(h.class)
+			AZSMaxHit_Bar(row, most > 0 and h.dmg / most, pr, pg, pb, 0.3, PARTY_BAR_W)
 			row.icon:SetAlpha(1)
 			row.name:SetText(h.name == me and (h.name .. " |cff777777(you)|r") or h.name)
 			row.name:SetTextColor(classColor(h.class))
@@ -976,13 +1256,26 @@ function AZSMaxHit_PaintProc(row, item)
 	else
 		row.icon:Hide()
 	end
+	-- Single hits, when direct hits were matched to this proc (AZSMaxHit_PlaceDirect).
+	local stats = AZSMaxHit_ProcStats(currentBook(), item.name)
 	local c
 	for c = 1, table.getn(COLS) do
 		local fs = row.cells[c]
-		local key = COLS[c].key
-		if key == "total" then
+		local col = COLS[c]
+		if col.key == "total" then
 			fs:SetText(fmt(dmg))
 			fs:SetTextColor(0.72, 0.72, 0.72)
+		elseif stats and (stats.hits or 0) > 0 then
+			if col.text then
+				fs:SetText(col.text(stats))
+			else
+				fs:SetText(fmt(col.value(stats)))
+			end
+			if col.key == "crit" and stats.crit then
+				fs:SetTextColor(0.85, 0.7, 0.1)
+			else
+				fs:SetTextColor(0.72, 0.72, 0.72)
+			end
 		else
 			fs:SetText("-") -- the game doesn't report single proc hits
 			fs:SetTextColor(0.35, 0.35, 0.35)
@@ -990,6 +1283,96 @@ function AZSMaxHit_PaintProc(row, item)
 	end
 	AZSMaxHit_ShowCells(row, false)
 	row:Show()
+end
+
+-- TOTAL and OVERKILL tiles. The game's meter counts only damage that landed;
+-- the combat log counts each hit in full. The gap is damage past the
+-- enemies' remaining health.
+function AZSMaxHit_TotalTiles(logTotal)
+	local landed = (selected == ME) and AZSMaxHit_meterSum or 0
+	if landed and landed > 0 then
+		setTile(tiles[3], "TOTAL", fmt(landed))
+		local over = logTotal - landed
+		if over > 0 then
+			setTile(tiles[4], "OVERKILL", AZSMaxHit_FmtShort(over) .. "  |cff999999"
+				.. math.floor(over / logTotal * 100 + 0.5) .. "%|r")
+		else
+			setTile(tiles[4], "OVERKILL", "|cff777777-|r")
+		end
+	else
+		setTile(tiles[3], "TOTAL", logTotal > 0 and fmt(logTotal) or "|cff777777-|r")
+		setTile(tiles[4], nil, nil)
+	end
+end
+
+-- Fill bar behind a row's name and total: `frac` of the biggest total in the
+-- list, in class color. It stops at the Total column so the other numbers stay clean.
+function AZSMaxHit_Bar(row, frac, r, g, b, a, width)
+	if not frac or frac <= 0 then
+		row.bar:Hide()
+		return
+	end
+	if frac > 1 then frac = 1 end
+	row.bar:SetWidth(math.max(1, frac * (width or BAR_W)))
+	row.bar:SetVertexColor(r, g, b, a)
+	row.bar:Show()
+end
+
+-- Bars always measure damage done, whatever the sort.
+function AZSMaxHit_BarValue(item)
+	if item.extra then
+		return 0
+	end
+	if item.child or item.procOnly then
+		return item.dmg or (item.r and item.r.total) or 0
+	end
+	return (item.r and item.r.total) or 0
+end
+
+function AZSMaxHit_BarMax(list)
+	local m, i = 0, nil
+	for i = 1, table.getn(list) do
+		local v = AZSMaxHit_BarValue(list[i])
+		if v > m then m = v end
+	end
+	return m
+end
+
+-- Bar colors by damage school.
+local SCHOOL_COLOR = {
+	Physical = { 0.78, 0.61, 0.43 },
+	Holy = { 1, 0.9, 0.5 },
+	Fire = { 1, 0.5, 0.1 },
+	Nature = { 0.35, 0.9, 0.35 },
+	Frost = { 0.45, 0.75, 1 },
+	Shadow = { 0.63, 0.43, 0.9 },
+	Arcane = { 1, 0.5, 1 },
+}
+
+-- A row's school: its own; a proc's is its parent's; a proc on its own row
+-- takes the school you deal the most damage with.
+function AZSMaxHit_SchoolColor(item, book)
+	local school
+	if item.child then
+		local pr = book.spells[item.parent]
+		school = pr and pr.school
+	elseif item.r and not item.procOnly then
+		school = item.r.school
+	end
+	if not school then
+		local by, best, spell, r = {}, 0, nil, nil
+		for spell, r in pairs(book.spells) do
+			if r.school then
+				by[r.school] = (by[r.school] or 0) + (r.total or 0)
+				if by[r.school] > best then
+					best = by[r.school]
+					school = r.school
+				end
+			end
+		end
+	end
+	local c = SCHOOL_COLOR[school or "Physical"] or SCHOOL_COLOR.Physical
+	return c[1], c[2], c[3]
 end
 
 local function refresh()
@@ -1043,7 +1426,7 @@ local function refresh()
 	for spell, r in pairs(book.spells) do
 		grand = grand + (r.total or 0)
 		if not top or (r.max or 0) > (top.max or 0) then
-			topName, top = spell, r
+			topName, top = r.label or spell, r
 		end
 	end
 	if top then
@@ -1058,24 +1441,33 @@ local function refresh()
 	local burst = book.burst.amount
 	setTile(tiles[2], "BURST" .. (book.burst.at and ("  |cff777777at " .. fmtTime(book.burst.at) .. "|r") or ""),
 		burst and fmt(burst) or "|cff777777-|r")
-	setTile(tiles[3], "TOTAL", grand > 0 and fmt(grand) or "|cff777777-|r")
-	setTile(tiles[4], nil, nil)
+	AZSMaxHit_TotalTiles(grand)
 
 	-- Rows
+	local barMax = AZSMaxHit_BarMax(list)
 	local i, c
 	for i = 1, ROWS do
 		local row = rows[i]
 		local item = i <= visibleRows and list[i + offset]
+		if item then
+			local isProc = item.child or item.procOnly
+			local cr, cg, cb = AZSMaxHit_SchoolColor(item, book)
+			AZSMaxHit_Bar(row, barMax > 0 and AZSMaxHit_BarValue(item) / barMax, cr, cg, cb, isProc and 0.16 or 0.32)
+		end
 		if item and (item.child or item.procOnly) then
 			AZSMaxHit_PaintProc(row, item)
 		elseif item then
 			r = item.r
-			AZSMaxHit_Indent(row, 0)
-			row.name:SetText(item.name)
-			row.name:SetTextColor(1, 1, 1)
+			AZSMaxHit_Indent(row, item.extra and 14 or 0)
+			row.name:SetText(item.label or item.name)
+			if item.extra then
+				row.name:SetTextColor(0.72, 0.72, 0.72)
+			else
+				row.name:SetTextColor(1, 1, 1)
+			end
 			if db.showIcons then
-				row.icon:SetAlpha(1)
-				row.icon:SetTexture(iconFor(item.name))
+				row.icon:SetAlpha(item.extra and 0.75 or 1)
+				row.icon:SetTexture(iconFor(item.parent or item.name))
 				row.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93) -- the party view may have changed it
 				row.icon:Show()
 			else
@@ -1102,6 +1494,16 @@ local function refresh()
 			else
 				hitCell:SetTextColor(1, 1, 1)
 				critCell:SetTextColor(0.75, 0.6, 0.2)
+			end
+			if item.extra then
+				-- Their damage is already in the game meter's Shadow Weaving or item
+				-- row, so it isn't counted again here.
+				for c = 1, table.getn(COLS) do
+					if COLS[c].key == "total" then
+						row.cells[c]:SetText("-")
+						row.cells[c]:SetTextColor(0.35, 0.35, 0.35)
+					end
+				end
 			end
 			row:Show()
 		else
@@ -1351,10 +1753,10 @@ local function createUI()
 
 	-- Summary strip
 	tiles = {
-		makeTile(PAD + 2, 240),
-		makeTile(262, 130),
-		makeTile(400, 140),
-		makeTile(540, 2), -- kept for the party view's layout; unused
+		makeTile(PAD + 2, 222),
+		makeTile(238, 100),
+		makeTile(342, 104),
+		makeTile(450, 92),
 	}
 
 	local divider = frame:CreateTexture(nil, "ARTWORK")
@@ -1406,6 +1808,11 @@ local function createUI()
 		local row = CreateFrame("Frame", nil, frame)
 		row:SetWidth(WIDTH)
 		row:SetHeight(ROW_H)
+		row.bar = row:CreateTexture(nil, "BACKGROUND")
+		row.bar:SetTexture(SOLID)
+		row.bar:SetPoint("LEFT", row, "LEFT", 4, 0)
+		row.bar:SetHeight(ROW_H - 1)
+		row.bar:Hide()
 		row.icon = row:CreateTexture(nil, "ARTWORK")
 		row.icon:SetWidth(ROW_H - 2)
 		row.icon:SetHeight(ROW_H - 2)
@@ -1602,21 +2009,33 @@ function AZSMaxHit_GameMeterTotal()
 	local sum = 0
 	if type(list) == "table" then
 		local procs, procSum = {}, 0
+		local own, raws, runSum = {}, {}, 0
 		local i
 		for i = 1, table.getn(list) do
 			local line = list[i]
 			if type(line) == "table" then
 				sum = sum + (tonumber(line.dmg) or 0)
 				local isProc = line.proc == 1 or line.proc == "1" or line.proc == true
-				if isProc and line.name and line.name ~= "" then
-					local raw = tonumber(line.dmg) or 0
-					local base = procBase[line.name]
+				local raw, base, dmg = tonumber(line.dmg) or 0, nil, 0
+				if line.name and line.name ~= "" then
+					-- This run's share of the line: the meter can carry over
+					-- the last run's numbers until it starts over.
+					base = procBase[line.name]
 					if base and raw < base then
 						-- The game's meter started over: the baseline no longer applies.
 						procBase[line.name] = nil
 						base = nil
 					end
-					local dmg = raw - (base or 0)
+					dmg = raw - (base or 0)
+					if dmg < 0 then dmg = 0 end
+					raws[line.name] = raw
+					runSum = runSum + dmg
+					if not isProc then
+						local key = string.lower(line.name)
+						own[key] = (own[key] or 0) + dmg
+					end
+				end
+				if isProc and line.name and line.name ~= "" then
 					if dmg > 0 then
 						table.insert(procs, { name = line.name, dmg = dmg, raw = raw })
 						procSum = procSum + dmg
@@ -1637,6 +2056,13 @@ function AZSMaxHit_GameMeterTotal()
 		end
 		AZSMaxHit_lastProcSum = procSum
 		meterProcs = procs
+		if runSum ~= AZSMaxHit_meterSum then
+			dirty = true
+		end
+		AZSMaxHit_meterOwn = own
+		AZSMaxHit_meterRaw = raws
+		AZSMaxHit_meterSum = runSum
+		AZSMaxHit_PlaceDirect(procs)
 	elseif not tonumber(total) then
 		return nil
 	end
@@ -1745,8 +2171,9 @@ SlashCmdList["AZSMAXHIT"] = function(msg)
 		end
 		local missing = {}
 		local spell
-		for spell in pairs(currentBook().spells) do
-			if iconFor(spell) == QUESTION then
+		local r
+		for spell, r in pairs(currentBook().spells) do
+			if not r.extraOf and iconFor(spell) == QUESTION then
 				table.insert(missing, spell)
 			end
 		end
@@ -1755,15 +2182,20 @@ SlashCmdList["AZSMAXHIT"] = function(msg)
 		end
 	elseif msg == "party" then
 		dumpParty()
+	elseif msg == "top" then
+		AZSMaxHit_DumpTop(currentBook(), say)
 	elseif msg == "help" then
 		say("/maxhit - show or hide the window")
 		say("/maxhit reset - clear the numbers (they also clear by themselves at every new run)")
 		say("/maxhit lock - lock the window;  /maxhit icons - icons on/off")
 		say("/maxhit meter - list what the game's meter reports, and abilities still missing an icon")
 		say("/maxhit party - list what the game's party meter reports (co-op)")
+		say("/maxhit top - the game's exact message for each ability's biggest hits")
 		say("Hit / Crit: biggest normal hit and biggest crit (the larger is highlighted).")
 		say("At: run time of the top hit.  Burst: most damage the ability did in any 1 second.")
-		say("Total: all damage the ability did (from the combat log; may differ a little from the game's meter).")
+		say("Total: the ability's own damage from the game's meter (no procs, no overkill). Indented rows are its procs.")
+		say("Damage-over-time spells show only their ticks. Other hits the game logs under their name (Shadow Weaving strikes, Pendant of the Plague's explosion) go to that proc's row, matched by the game's meter; what can't be matched shows as Other hits.")
+		say("Overkill: damage past what enemies had left (combat log minus the game's meter).")
 		say("Click a column to sort by it. Mouse wheel scrolls.")
 		say("Co-op: a Party tab compares everyone, using the game's own party meter.")
 		say("Needs Options > Combat > Show Target Damage. Turn on Periodic Damage for DoTs and Pet Damage for pets.")

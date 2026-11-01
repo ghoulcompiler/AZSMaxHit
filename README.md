@@ -15,12 +15,13 @@ Damage meters tell you which ability did the most damage overall. AZS Max Hit te
 
 ## Features
 
-- **Summary at the top:** your top hit (with the ability, whether it crit, and when), your best burst, and your total damage this run.
+- **Summary at the top:** your top hit (with the ability, whether it crit, and when), your best burst, your total damage this run, and your overkill: damage past what enemies had left.
 - **A row per ability** (spells, melee, pets and procs) with its total, biggest normal hit, biggest crit, run time of its top hit, burst, average hit, hit count and crit rate. Click a column header to sort by it.
 - **Pets and summons** get their own rows, e.g. `Water Elemental: Waterbolt`.
 - **Procs under their ability:** item and talent procs (Pendant of the Plague, Shadowy Apparitions, Shadowform, ...) appear indented under the ability that triggers them, with their total from the game's meter. The game doesn't report single proc hits, so their other columns show a dim *-*.
 - **Party view in co-op:** a Party tab compares every hero side by side: top ability, its DPS, DPS, total and share, straight from the game's party meter. See [Co-op](#co-op).
-- **Icons** from your spellbook, talents and the game's own meter.
+- **Fill bars** show at a glance which abilities do the most damage, colored by damage school (Shadow, Fire, Frost, ...).
+- **Icons** from your spellbook, talents, items and the game's own meter.
 - **Fresh every run:** the window clears by itself when a new run starts. Nothing from past runs is kept.
 - **Resizable:** drag the grip in the bottom-right corner to set the height; scroll with the mouse wheel.
 
@@ -70,13 +71,14 @@ The addon reads the damage the game reports, so turn these on in **Options → C
 | `/maxhit icons` | Icons on or off |
 | `/maxhit meter` | List what the game's own meter reports, and abilities still missing an icon |
 | `/maxhit party` | List what the game's party meter reports (co-op) |
+| `/maxhit top` | Print the game's exact message for each ability's biggest hits |
 | `/maxhit help` | List all commands in game |
 
 ## Columns
 
 | Column | Meaning |
 |---|---|
-| **Total** | All damage the ability did this run |
+| **Total** | The ability's own damage this run, from the game's meter: procs and overkill not included. Sorting by Total sorts an ability together with its procs |
 | **Hit** | Biggest normal (non-crit) hit |
 | **Crit** | Biggest crit. Whichever of Hit and Crit is larger is highlighted |
 | **At** | Run time when the ability's top hit landed |
@@ -89,7 +91,9 @@ The addon reads the damage the game reports, so turn these on in **Options → C
 
 - **Empty window, or DoTs and pets missing?** Check the [game settings](#game-settings).
 - The addon reads the combat log, which is in **English**. A game set to another language may need its own patterns; open an issue if that's you.
-- **An ability's row includes its procs.** The combat log reports proc hits under the triggering spell's name (Shadowy Apparitions as Mind Blast, Pendant of the Plague ticks as Shadow Word: Pain), so an ability's Total, Hits and top hit include them. The indented rows show each proc's own total from the game's meter. Procs the addon can't place under an ability, like Shadow Weaving, get a grayed row of their own. The talent-to-spell list covers all nine classes and comes from the talent tooltips; if a proc that casts one spell still shows on its own row, please [open an issue](https://github.com/GhoulCompiler/AZSMaxHit/issues) with the output of `/maxhit meter`.
+- **An ability's row includes its procs.** The combat log reports proc hits under the triggering spell's name (Shadowy Apparitions as Mind Blast, Pendant of the Plague ticks as Shadow Word: Pain), so an ability's Hit, Crit, Burst and Hits include them. Total doesn't: it comes from the game's meter, which keeps procs apart, and the indented rows show each proc's own total. Procs the addon can't place under an ability, like Shadow Weaving, get a grayed row of their own. The talent-to-spell list covers all nine classes and comes from the talent tooltips; if a proc that casts one spell still shows on its own row, please [open an issue](https://github.com/GhoulCompiler/AZSMaxHit/issues) with the output of `/maxhit meter`.
+- **Damage-over-time spells** (Shadow Word: Pain, Devouring Plague, Serpent Sting, Rend, ...) show only their own ticks. Other hits the game logs under their name, like Shadow Weaving strikes or Pendant of the Plague's explosion, are matched to the right proc row by watching which proc's total in the game's meter went up, so those procs get real Hit and Crit numbers. Hits that can't be matched show as **Other hits** under the spell. Spells that hit directly anyway, like Mind Blast, can't be split this way.
+- **Overkill** is the gap between the combat log, which counts every hit in full, and the game's meter, which counts only the health enemies lost. It's an estimate.
 - **Max hits are yours only.** The game doesn't send a partner's hits to your combat log, so the Party tab uses the game's party meter: total, DPS, share and top ability for each hero.
 
 ## Feedback
