@@ -181,6 +181,9 @@ local FALLBACK_ICONS = {
 	["Killing Spree"] = ICON_DIR .. "Ability_Rogue_Sprint",
 	["Divine Storm"] = ICON_DIR .. "Spell_Holy_SealOfRighteousness",
 	["Piercing Shots"] = ICON_DIR .. "Ability_PierceDamage",
+	["Stormstrike"] = ICON_DIR .. "Spell_Holy_SealOfMight",
+	["Rockbiter Weapon"] = ICON_DIR .. "Spell_Nature_RockBiter",
+	["Fire Nova"] = ICON_DIR .. "Spell_Fire_SealOfFire",
 	-- Jewelry whose procs the game's meter lists as "Item: Spell".
 	["Eye of the Splitting Sky"] = ICON_DIR .. "INV_Jewelry_Necklace_16",
 	["Stormcaller's Amulet"] = ICON_DIR .. "INV_Jewelry_Necklace_AhnQiraj_02",
@@ -741,6 +744,10 @@ local PROC_PARENT = {
 	-- Shaman
 	["Elemental Mastery"] = "Chain Lightning",   -- "a second Chain Lightning"
 	["Maelstrom Weapon"] = "Chain Lightning",    -- "a free Chain Lightning"
+	["Flametongue Weapon"] = "Fire Nova",        -- "casts a free Fire Nova"
+	["Eye of the Tempest"] = "Stormstrike",      -- "strikes again"
+	-- No Resonant Shocks or Frostbrand Weapon: the game's meter lists the Shocks
+	-- they cast under those Shocks (0.134).
 	-- Druid
 	["Omen of Clarity"] = "Starfire",            -- "a free Starfire"
 	["Starfall"] = "Starfire",
@@ -1864,10 +1871,20 @@ local KIND = {
 	CHAT_MSG_COMBAT_FRIENDLYPLAYER_HITS = "petmelee",
 }
 
+-- Nothing in the client clears the party meter, so after leaving a co-op run
+-- with End Run it could keep the old party's lines. The run's context knows.
+function AZSMaxHit_IsSolo()
+	if not AZS_GetMeterContext then
+		return false
+	end
+	local ok, context = pcall(AZS_GetMeterContext)
+	return ok and type(context) == "table" and context.partyState == "solo"
+end
+
 -- Co-op heroes, straight from the game's party meter. Empty when playing solo.
 local function readParty()
 	local list = {}
-	if AZS_GetPartyMeter then
+	if AZS_GetPartyMeter and not AZSMaxHit_IsSolo() then
 		local ok, lines = pcall(AZS_GetPartyMeter)
 		if ok and type(lines) == "table" then
 			local i
@@ -1995,6 +2012,48 @@ driver:SetScript("OnEvent", function()
 	end
 end)
 
+-- Meter lines carry no icon, but the game's meter snapshot knows one for each
+-- damage source (new necklaces and the like). Asked only while a line still has
+-- no icon, at most every 15 seconds.
+local nextIconRead = 0
+
+function AZSMaxHit_ReadSourceIcons()
+	if not AZS_GetMeterContext or not AZS_GetMeterSnapshot or GetTime() < nextIconRead then
+		return
+	end
+	local missing = false
+	for name in pairs(AZSMaxHit_meterRaw or {}) do
+		-- An item proc ("Item: Spell") shows the item's icon.
+		local _, _, item = string.find(name, "^(.-): .+$")
+		if iconFor(name) == QUESTION and (not item or iconFor(item) == QUESTION) then
+			missing = true
+		end
+	end
+	if not missing then
+		return
+	end
+	nextIconRead = GetTime() + 15
+	local ok, context = pcall(AZS_GetMeterContext)
+	if not ok or type(context) ~= "table" or not context.runId then
+		return
+	end
+	local snapshot
+	ok, snapshot = pcall(AZS_GetMeterSnapshot, {
+		apiVersion = 1, runId = context.runId, metric = "damage", scope = "self",
+		period = "run", groupBy = "source", windowSeconds = 0,
+	})
+	if not ok or type(snapshot) ~= "table" or type(snapshot.sources) ~= "table" then
+		return
+	end
+	for _, s in pairs(snapshot.sources) do
+		if type(s) == "table" and s.name and not db.icons[s.name]
+				and type(s.icon) == "table" and s.icon.status == "ready" then
+			rememberIcon(s.name, s.icon.path)
+			dirty = true
+		end
+	end
+end
+
 -- Total damage on the game's built-in meter, or nil if it can't be read.
 -- Also takes the icon of each meter line: the game knows icons for its own
 -- upgrades (Corpse Explosion and the like) that are not in your spellbook.
@@ -2063,6 +2122,7 @@ function AZSMaxHit_GameMeterTotal()
 		AZSMaxHit_meterRaw = raws
 		AZSMaxHit_meterSum = runSum
 		AZSMaxHit_PlaceDirect(procs)
+		AZSMaxHit_ReadSourceIcons()
 	elseif not tonumber(total) then
 		return nil
 	end

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+- Updated for the Enhancement Shaman rework (game 0.134 and 0.135): Stormstrike and Rockbiter Weapon have their icons, Flametongue Weapon sits under Fire Nova, and Eye of the Tempest sits under Stormstrike.
+- Procs and necklaces without a known icon now take theirs from the game's meter, so new ones stop showing a question mark.
+- After you leave a co-op run with End Run, your next solo run no longer shows the old party in the Party tab.
+
 ## 1.2.0
 
 - Each row has a fill bar behind the ability name and total, so your biggest damage dealers stand out at a glance. The bar is colored by damage school: Shadow purple, Fire orange, Frost blue, Holy gold, Nature green, Arcane pink, Physical tan. Bars always measure total damage, whatever you sort by, and stop at the Total column so the other numbers stay clean.
