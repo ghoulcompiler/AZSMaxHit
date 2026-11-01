@@ -4,3 +4,7 @@ Thumbs.db
 
 # Release zips belong in GitHub Releases, not the repo
 *.zip
+
+# Local Claude Code notes, tests and the screenshot demo addon
+.claude/
+.game/
