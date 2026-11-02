@@ -1044,7 +1044,10 @@ local PROC_PARENT = {
 	["Elemental Mastery"] = "Chain Lightning",   -- "a second Chain Lightning"
 	["Maelstrom Weapon"] = "Chain Lightning",    -- "a free Chain Lightning"
 	["Flametongue Weapon"] = "Fire Nova",        -- "casts a free Fire Nova"
-	["Eye of the Tempest"] = "Stormstrike",      -- "strikes again"
+	-- The neck's Stormstrike can cast a free Chain Lightning, logged under that name. Under
+	-- Stormstrike, as the meter's name suggests, the row counted twice (owner's report, 0.138).
+	["Eye of the Tempest"] = "Chain Lightning",
+	["Eye of the Tempest: Stormstrike"] = "Chain Lightning",
 	["Frostbrand Weapon"] = "Frost Shock",       -- a proc line of its own on the meter since 0.134's note (seen on 0.138)
 	-- No Resonant Shocks: the game's meter lists the Shocks it casts under those Shocks (0.134).
 	-- Druid
@@ -1064,16 +1067,22 @@ local PROC_PARENT = {
 -- name), "child" plus the parent spell, or "alone" (a row of its own).
 -- Also returns the label to show: an item proc shows just the item's name.
 local function procPlace(p, book)
+	if book.splitRows and book.splitRows[p.name] then
+		return "split"
+	end
 	-- Also a summon's proc line with "Owner: Spell" rows (Treant: Melee).
 	if book.spells[p.name] or not AZSMaxHit_MeterOnly(p.name) then
 		return "skip"
 	end
 	local parent, label = PROC_PARENT[p.name], p.name
-	if not parent then
-		local _, _, item, spell = string.find(p.name, "^(.-): (.+)$")
-		if item then
-			parent, label = spell, item
-		end
+	local _, _, item, spell = string.find(p.name, "^(.-): (.+)$")
+	if item then
+		parent, label = parent or spell, item
+	end
+	-- The feed's own word beats the hand-built list, when the proc only borrows one spell.
+	local stats = book.spells["@proc:" .. p.name]
+	if stats and stats.abilityCount == 1 then
+		parent = next(stats.abilities)
 	end
 	if parent and book.spells[parent] then
 		return "child", parent, label
@@ -1203,6 +1212,9 @@ function AZSMaxHit_ResetDirect()
 	AZSMaxHit_pending = {}
 	AZSMaxHit_weavingSizes = {}
 	AZSMaxHit_recentBites = {}
+	AZSMaxHit_feedSeen = {}
+	AZSMaxHit_heldFeed = {}
+	AZSMaxHit_splitExact = {}
 	procLast, procCredit = {}, {}
 end
 
@@ -1212,6 +1224,50 @@ function AZSMaxHit_ProcStats(book, procName)
 end
 
 -- Proc damage the game's meter puts under each spell, by spell name.
+-- A proc whose hits differ a lot by spell gets a row under each (Windfury Weapon: about 1,350
+-- off Stormstrike, 300 off Rockbiter). The meter has one line for it, so that line's total is
+-- shared out: by the meter snapshot's own numbers per source when it has them, else by the
+-- feed's totals, which include overkill. Either way the rows still add up to the line.
+AZSMaxHit_SPLIT_PROC = { ["Windfury Weapon"] = true }
+AZSMaxHit_splitExact = {}
+
+function AZSMaxHit_SplitShares(p, book)
+	local shares = {}
+	local exactSum, feedSum, allExact = 0, 0, true
+	local ability, key
+	for ability, key in pairs(book.splitRows[p.name]) do
+		local stats = book.spells[key] or {}
+		local exact = 0
+		local known = false
+		local sourceKey
+		for sourceKey in pairs(stats.sourceKeys or {}) do
+			if AZSMaxHit_splitExact[sourceKey] then
+				exact = exact + AZSMaxHit_splitExact[sourceKey]
+				known = true
+			end
+		end
+		if not known then
+			allExact = false
+		end
+		table.insert(shares, { ability = ability, name = string.sub(key, 7), exact = exact, feed = stats.total or 0 })
+		exactSum = exactSum + exact
+		feedSum = feedSum + (stats.total or 0)
+	end
+	local useExact = allExact and exactSum > 0
+	local i
+	for i = 1, table.getn(shares) do
+		local s = shares[i]
+		if useExact then
+			s.dmg = p.dmg * s.exact / exactSum
+		elseif feedSum > 0 then
+			s.dmg = p.dmg * s.feed / feedSum
+		else
+			s.dmg = 0
+		end
+	end
+	return shares
+end
+
 function AZSMaxHit_KidSums(book)
 	local sums = {}
 	local i
@@ -1221,6 +1277,12 @@ function AZSMaxHit_KidSums(book)
 			local where, parent = procPlace(p, book)
 			if where == "child" then
 				sums[parent] = (sums[parent] or 0) + p.dmg
+			elseif where == "split" then
+				local shares = AZSMaxHit_SplitShares(p, book)
+				local s
+				for s = 1, table.getn(shares) do
+					sums[shares[s].ability] = (sums[shares[s].ability] or 0) + shares[s].dmg
+				end
 			end
 		end
 	end
@@ -1272,11 +1334,22 @@ function AZSMaxHit_OwnerTakes(spell, owner)
 	local prefix = owner .. ": "
 	local s
 	for s in pairs(run.spells) do
-		if s < spell and string.sub(s, 1, string.len(prefix)) == prefix then
+		if string.sub(s, 1, string.len(prefix)) == prefix and AZSMaxHit_RowFirst(s, spell) then
 			return false
 		end
 	end
 	return true
+end
+
+-- Which of a summon's rows leads its group: its melee, else the first by name, so a
+-- rare spell (Succubus: Death Coil) doesn't take the top spot from Succubus: Melee.
+function AZSMaxHit_RowFirst(a, b)
+	local ma = string.find(string.lower(a), ": melee$") and true or false
+	local mb = string.find(string.lower(b), ": melee$") and true or false
+	if ma ~= mb then
+		return ma
+	end
+	return a < b
 end
 
 function AZSMaxHit_OwnView(spell, r, mine, kids)
@@ -1346,7 +1419,7 @@ function AZSMaxHit_GroupParent(spell)
 				first = s
 				break
 			end
-			if string.sub(name, 1, string.len(prefix)) == prefix and (not first or s < first) then
+			if string.sub(name, 1, string.len(prefix)) == prefix and (not first or AZSMaxHit_RowFirst(s, first)) then
 				first = s
 			end
 		end
@@ -1398,6 +1471,16 @@ function AZSMaxHit_ExpandProcs(list, book)
 		local where, parent, label = "skip"
 		if p.dmg > 0 then
 			where, parent, label = procPlace(p, book)
+		end
+		if where == "split" then
+			local shares = AZSMaxHit_SplitShares(p, book)
+			local s
+			for s = 1, table.getn(shares) do
+				local share = shares[s]
+				kids[share.ability] = kids[share.ability] or {}
+				table.insert(kids[share.ability], { name = share.name, label = p.name, dmg = share.dmg, child = true,
+					parent = share.ability, parentTotal = book.spells[share.ability] and book.spells[share.ability].total })
+			end
 		end
 		if where == "child" then
 			kids[parent] = kids[parent] or {}
@@ -1632,7 +1715,8 @@ end
 function AZSMaxHit_ShowCells(row, partyMode)
 	local i
 	for i = 1, table.getn(row.cells) do
-		if partyMode or (i == AZSMaxHit_AtIndex and not db.showAt) then
+		if partyMode or (i == AZSMaxHit_AtIndex and not db.showAt)
+				or (AZSMaxHit_viewNow and AZSMaxHit_VIEW_HIDE[AZSMaxHit_viewNow][COLS[i].key]) then
 			row.cells[i]:Hide()
 		else
 			row.cells[i]:Show()
@@ -1814,9 +1898,16 @@ function AZSMaxHit_TotalTiles(logTotal)
 	local landed = (selected == ME) and AZSMaxHit_meterSum or 0
 	if landed and landed > 0 then
 		setTile(tiles[3], "TOTAL", AZSMaxHit_FmtShort(landed))
-		-- Pet hits aren't in the combat log, so they can't be part of the gap.
-		local over = logTotal - (landed - (AZSMaxHit_ProcTotal("Pets") or 0))
-		if over > 0 then
+		-- Hits we never see can't be part of the gap: pets missing from the log, or in the
+		-- feed's mode a summon missing from the feed (a Frost Mage's Water Elemental).
+		local pets = AZSMaxHit_ProcTotal("Pets") or 0
+		if AZSMaxHit_feedMode and currentBook().spells["@proc:Pets"] then
+			pets = 0
+		end
+		local over = logTotal - (landed - pets)
+		if AZSMaxHit_viewNow then
+			setTile(tiles[4], nil, nil)
+		elseif over > 0 then
 			setTile(tiles[4], "OVERKILL", AZSMaxHit_FmtShort(over) .. "  |cff999999"
 				.. math.floor(over / logTotal * 100 + 0.5) .. "%|r")
 		else
@@ -1909,6 +2000,7 @@ local function refresh()
 	if not showTabs then
 		selected = ME
 	end
+	AZSMaxHit_CheckCompact()
 	local ti
 	for ti = 1, 2 do
 		local tab = tabs[ti]
@@ -1966,6 +2058,9 @@ local function refresh()
 	local burst = book.burst.amount
 	setTile(tiles[2], "BURST" .. (book.burst.at and db.showAt and ("  |cff777777at " .. fmtTime(book.burst.at) .. "|r") or ""),
 		burst and AZSMaxHit_FmtShort(burst) or "|cff777777-|r")
+	if AZSMaxHit_viewNow == "mini" then
+		setTile(tiles[2], nil, nil)
+	end
 	AZSMaxHit_TotalTiles(grand)
 
 	-- Rows
@@ -2065,8 +2160,25 @@ local function button(parent, label, onClick)
 	fs:SetTextColor(0.6, 0.6, 0.6)
 	b:SetScript("OnClick", onClick)
 	b:SetScript("OnEnter", function() fs:SetTextColor(1, 0.82, 0) end)
-	b:SetScript("OnLeave", function() fs:SetTextColor(0.6, 0.6, 0.6) end)
+	b:SetScript("OnLeave", function()
+		if b.active then
+			fs:SetTextColor(1, 0.82, 0)
+		else
+			fs:SetTextColor(0.6, 0.6, 0.6)
+		end
+	end)
+	b.fs = fs
 	return b
+end
+
+-- A button that stays gold while its view is on.
+function AZSMaxHit_PaintViewButton(b, active)
+	b.active = active
+	if active then
+		b.fs:SetTextColor(1, 0.82, 0)
+	else
+		b.fs:SetTextColor(0.6, 0.6, 0.6)
+	end
 end
 
 -- Keep the window pinned by its top-left corner so it grows downward.
@@ -2088,18 +2200,23 @@ local function savePos()
 	end
 end
 
--- Offsets are in the window's own scale, so its corner is converted to stay in place.
-function AZSMaxHit_SetScale(value)
+-- Offsets are in the window's own scale, so its corner is converted to stay in place: the
+-- top-left, or with `keepRight` the top-right, where the - and + buttons stay under the mouse.
+function AZSMaxHit_SetScale(value, keepRight)
 	local scale = tonumber(value)
 	if not scale or scale < 0.6 or scale > 1.5 then
 		return false
 	end
 	local old = frame:GetScale() or 1
 	local left, topY = frame:GetLeft(), frame:GetTop()
+	local right = frame:GetRight()
 	frame:SetScale(scale)
 	db.scale = scale
 	if left and topY then
 		local x, y = left * old / scale, topY * old / scale
+		if keepRight and right then
+			x = right * old / scale - frame:GetWidth()
+		end
 		frame:ClearAllPoints()
 		frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x, y)
 		db.pos = { point = "TOPLEFT", relPoint = "BOTTOMLEFT", x = x, y = y }
@@ -2140,25 +2257,80 @@ local function headerButton(parent, key, label, left, width, justify)
 	return b
 end
 
+-- The title bar's - and + buttons. Past 0.6 or 1.5, and when the window is locked, nothing happens.
+function AZSMaxHit_StepScale(delta)
+	if db.locked then
+		return
+	end
+	AZSMaxHit_SetScale(math.floor(((db.scale or 1) + delta) * 10 + 0.5) / 10, true)
+end
+
+-- Views (the C and M buttons, /maxhit compact, /maxhit mini). Compact: only Total, Hit, Crit
+-- and Burst, no OVERKILL tile. Mini: only Total, with TOP HIT and TOTAL on top. Both are narrower.
+-- The Party tab has its own columns, so it keeps the full width.
+AZSMaxHit_VIEW_HIDE = {
+	compact = { avg = true, hits = true, critp = true },
+	mini = { hit = true, crit = true, at = true, burst = true, avg = true, hits = true, critp = true },
+}
+
+function AZSMaxHit_ViewWanted()
+	if selected == PARTY then
+		return nil
+	end
+	return db.view
+end
+
+function AZSMaxHit_CheckCompact()
+	if AZSMaxHit_ViewWanted() ~= AZSMaxHit_viewNow then
+		AZSMaxHit_ApplyColumns()
+	end
+end
+
+-- Turns a view on, or off if it is on. The top-right corner stays in place, so the button
+-- stays under the mouse.
+function AZSMaxHit_SetView(view)
+	local right, topY = frame:GetRight(), frame:GetTop()
+	if db.view == view then
+		db.view = nil
+	else
+		db.view = view
+	end
+	AZSMaxHit_ApplyColumns()
+	if right and topY then
+		local x = right - frame:GetWidth()
+		frame:ClearAllPoints()
+		frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x, topY)
+		db.pos = { point = "TOPLEFT", relPoint = "BOTTOMLEFT", x = x, y = topY }
+	end
+end
+
 -- The At column is off by default (/maxhit at). Turning it on widens the window by
 -- 42 px and moves the columns after it; everything before it stays where it is.
 function AZSMaxHit_ApplyColumns()
-	local extra = db.showAt and 42 or 0
-	WIDTH = 500 + extra
+	local view = AZSMaxHit_ViewWanted()
+	AZSMaxHit_viewNow = view
+	-- From the setting, not `view`: it stays on while the Party tab shows the full width.
+	AZSMaxHit_PaintViewButton(frame.compactButton, db.view == "compact")
+	AZSMaxHit_PaintViewButton(frame.miniButton, db.view == "mini")
+	local hide = view and AZSMaxHit_VIEW_HIDE[view] or {}
+	local extra = (db.showAt and view ~= "mini") and 42 or 0
+	WIDTH = (view == "mini" and 222 or view == "compact" and 382 or 500) + extra
 	frame:SetWidth(WIDTH)
-	frame.titleBtn:SetWidth(WIDTH - 60)
+	frame.titleBtn:SetWidth(WIDTH - 140)
 	frame.divider:SetWidth(WIDTH - 2 * PAD)
 	header:SetWidth(WIDTH)
 	lastLayout = nil -- the scrollbar sits at the window's right edge
-	if not db.showAt and sortKey == "at" then
+	if (not db.showAt and sortKey == "at") or hide[sortKey] then
 		sortKey = "total"
 		db.sort = sortKey
 	end
 	local i, c
 	for i = 1, table.getn(headerCells) do
 		local h = headerCells[i]
-		if h.key == "at" then
-			if db.showAt then h.b:Show() else h.b:Hide() end
+		if hide[h.key] or (h.key == "at" and not db.showAt) then
+			h.b:Hide()
+		else
+			h.b:Show()
 		end
 		for c = AZSMaxHit_AtIndex + 1, table.getn(COLS) do
 			local col = COLS[c]
@@ -2178,8 +2350,27 @@ function AZSMaxHit_ApplyColumns()
 		AZSMaxHit_ShowCells(rows[i], false)
 	end
 	-- With times on, BURST's label needs room for "at 12:34".
-	AZSMaxHit_MoveTile(tiles[2], 258, db.showAt and 92 or 60)
-	AZSMaxHit_MoveTile(tiles[3], db.showAt and 352 or 320, 72)
+	local burstW = db.showAt and 92 or 60
+	if view == "mini" then
+		-- TOTAL lined up with its column's right edge.
+		AZSMaxHit_MoveTile(tiles[1], PAD + 2, 137)
+		AZSMaxHit_MoveTile(tiles[3], 149, 58)
+	elseif view == "compact" then
+		-- TOP HIT on the left, and the two sums as a pair on the right, with BURST lined
+		-- up with its column's right edge.
+		AZSMaxHit_MoveTile(tiles[1], PAD + 2, 228)
+		AZSMaxHit_MoveTile(tiles[3], 240, 72)
+		AZSMaxHit_MoveTile(tiles[2], 375 + extra - burstW, burstW)
+	else
+		AZSMaxHit_MoveTile(tiles[1], PAD + 2, 246)
+		AZSMaxHit_MoveTile(tiles[2], 258, burstW)
+		AZSMaxHit_MoveTile(tiles[3], 258 + burstW + 2, 72)
+	end
+	local justify = view and "RIGHT" or "LEFT"
+	tiles[2].label:SetJustifyH(justify)
+	tiles[2].value:SetJustifyH(justify)
+	tiles[3].label:SetJustifyH(justify)
+	tiles[3].value:SetJustifyH(justify)
 	AZSMaxHit_MoveTile(tiles[4], 392 + extra, 102)
 	paintHeaders()
 end
@@ -2326,7 +2517,7 @@ local function createUI()
 	-- Title bar: drag to move the window.
 	local titleBtn = CreateFrame("Button", nil, frame)
 	titleBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, -5)
-	titleBtn:SetWidth(WIDTH - 60)
+	titleBtn:SetWidth(WIDTH - 140)
 	frame.titleBtn = titleBtn
 	titleBtn:SetHeight(16)
 	titleBtn:RegisterForDrag("LeftButton")
@@ -2349,6 +2540,21 @@ local function createUI()
 		refresh()
 	end)
 	reset:SetPoint("RIGHT", close, "LEFT", -4, 0)
+	local miniButton = button(frame, "M", function()
+		AZSMaxHit_SetView("mini")
+		refresh()
+	end)
+	miniButton:SetPoint("RIGHT", reset, "LEFT", -4, 0)
+	local compactButton = button(frame, "C", function()
+		AZSMaxHit_SetView("compact")
+		refresh()
+	end)
+	compactButton:SetPoint("RIGHT", miniButton, "LEFT", -4, 0)
+	frame.compactButton, frame.miniButton = compactButton, miniButton
+	local bigger = button(frame, "+", function() AZSMaxHit_StepScale(0.1) end)
+	bigger:SetPoint("RIGHT", compactButton, "LEFT", -4, 0)
+	local smaller = button(frame, "-", function() AZSMaxHit_StepScale(-0.1) end)
+	smaller:SetPoint("RIGHT", bigger, "LEFT", -4, 0)
 
 	-- Summary strip
 	tiles = {
@@ -2601,7 +2807,7 @@ driver:SetScript("OnEvent", function()
 		return
 	end
 	local kind = KIND[event]
-	if kind then
+	if kind and not AZSMaxHit_HoldLogHit(arg1, kind, event) then
 		ingest(arg1, kind, event)
 	end
 end)
@@ -2685,27 +2891,241 @@ function AZSMaxHit_PlacePetHits(book, hits, at)
 		while recent[1] and t - recent[1].t > 1 do
 			table.remove(recent, 1)
 		end
-		local bite
-		if wrath and not e.critical then
-			local j
-			for j = 1, table.getn(recent) do
-				local b = recent[j]
-				local gap = t - b.t
-				if b.amount == amount and b.targetId ~= e.targetId and b.splashes < 2
-						and gap >= 0.1 and gap <= 0.45 then
-					bite = b
-					break
+		-- Since game 0.139 the hit names its meter line. The guess below is for older games,
+		-- or a name that isn't a line we show.
+		if e.meterSource and (AZSMaxHit_ProcTotal(e.meterSource) or 0) > 0 then
+			AZSMaxHit_RecordPetHit(book, e, at, e.meterSource)
+		else
+			local bite
+			if wrath and not e.critical then
+				local j
+				for j = 1, table.getn(recent) do
+					local b = recent[j]
+					local gap = t - b.t
+					if b.amount == amount and b.targetId ~= e.targetId and b.splashes < 2
+							and gap >= 0.1 and gap <= 0.45 then
+						bite = b
+						break
+					end
 				end
 			end
-		end
-		if bite then
-			bite.splashes = bite.splashes + 1
-			AZSMaxHit_RecordPetHit(book, e, at, "Bestial Wrath")
-		else
-			table.insert(recent, { t = t, amount = amount, targetId = e.targetId, splashes = 0 })
-			AZSMaxHit_RecordPetHit(book, e, at)
+			if bite then
+				bite.splashes = bite.splashes + 1
+				AZSMaxHit_RecordPetHit(book, e, at, "Bestial Wrath")
+			else
+				table.insert(recent, { t = t, amount = amount, targetId = e.targetId, splashes = 0 })
+				AZSMaxHit_RecordPetHit(book, e, at)
+			end
 		end
 	end
+end
+
+-- For /maxhit feed: how the combat text feed names this run's hits, per source, ability and
+-- meter line. This is what shows whether the log's proc guessing can move to the feed.
+AZSMaxHit_feedSeen = {}
+
+function AZSMaxHit_NoteFeed(e)
+	local kind = tostring(e.sourceKind)
+	local ability = e.abilityName or e.damageType or "?"
+	local source = e.meterSource or "(none)"
+	local periodic = e.periodic and true or false
+	local id = kind .. "|" .. ability .. "|" .. source .. "|" .. tostring(periodic)
+	local s = AZSMaxHit_feedSeen[id]
+	if not s then
+		s = { kind = kind, ability = ability, source = source, periodic = periodic,
+			key = e.meterSourceKey, hits = 0, total = 0, max = 0 }
+		AZSMaxHit_feedSeen[id] = s
+	end
+	local amount = tonumber(e.amount)
+	s.hits = s.hits + 1
+	s.total = s.total + amount
+	if amount > s.max then
+		s.max = amount
+	end
+end
+
+function AZSMaxHit_DumpFeed(say)
+	local list = {}
+	local _, s
+	for _, s in pairs(AZSMaxHit_feedSeen) do
+		table.insert(list, s)
+	end
+	if table.getn(list) == 0 then
+		say("no damage in the game's combat text feed yet this run.")
+		return
+	end
+	table.sort(list, function(a, b) return a.total > b.total end)
+	say("combat text feed, this run: source, ability -> meter line")
+	local i
+	for i = 1, table.getn(list) do
+		s = list[i]
+		say(s.kind .. ", " .. s.ability .. (s.periodic and " (ticks)" or "") .. " -> " .. s.source
+			.. " [" .. tostring(s.key) .. "]: " .. s.hits .. " hits, total " .. s.total .. ", biggest " .. s.max)
+	end
+end
+
+-- Since game 0.139 the feed says which meter line each hit counts toward, so a row's Hit, Crit
+-- and the rest are exact: a Shadow Weaving strike that the log calls Shadow Word: Pain goes on
+-- Shadow Weaving's row. In that mode the combat log isn't read at all, and all the guessing
+-- from it (hit matching, DOT_ONLY, LOG_NAME, summons' rows) stays out of the way.
+-- nil until decided: a run's first hit can name no line, so one event can't tell an older
+-- game apart. Log hits wait meanwhile, and are read after all if the feed turns out too old.
+AZSMaxHit_feedMode = nil
+AZSMaxHit_heldLog = {}
+AZSMaxHit_heldFeed = {}
+AZSMaxHit_unnamedHits = 0
+
+local FEED_SCHOOL = {
+	[1] = "Physical", [2] = "Holy", [4] = "Fire", [8] = "Nature", [16] = "Frost", [32] = "Shadow", [64] = "Arcane",
+}
+
+function AZSMaxHit_HoldLogHit(msg, kind, evt)
+	if AZSMaxHit_feedMode ~= nil then
+		return AZSMaxHit_feedMode
+	end
+	if not AZS_GetCombatTextEvents then
+		AZSMaxHit_feedMode = false
+		return false
+	end
+	table.insert(AZSMaxHit_heldLog, { msg = msg, kind = kind, evt = evt, t = now() })
+	return true
+end
+
+function AZSMaxHit_DecideFeed(useFeed)
+	AZSMaxHit_feedMode = useFeed
+	local held = AZSMaxHit_heldLog
+	AZSMaxHit_heldLog = {}
+	if not useFeed then
+		local keepEvent, keepArg = event, arg1
+		local i
+		for i = 1, table.getn(held) do
+			event, arg1 = held[i].evt, held[i].msg
+			ingest(held[i].msg, held[i].kind, held[i].evt)
+		end
+		event, arg1 = keepEvent, keepArg
+	end
+end
+
+-- The row a hit goes on: its key, and for a meter line under another name its label and the
+-- ability it borrows. A summon's swing may name the summon while the meter only has Pets.
+function AZSMaxHit_FeedRow(e)
+	local summon = e.sourceKind == "summon" or e.sourceKind == "pet"
+	local ability = e.abilityName
+	if not ability and not summon then
+		ability = e.reflected and "Damage Shield" or "Melee"
+	end
+	local source = e.meterSource
+	-- AZSMaxHit_LogName reads the school from the log's sentence (Attack in Fire is Searing Totem).
+	local sentence = " " .. (FEED_SCHOOL[e.schoolMask] or "Physical") .. " damage."
+	if summon then
+		local own = AZSMaxHit_meterOwn
+		local listed = source and ((own and own[string.lower(source)]) or AZSMaxHit_ProcTotal(source))
+		if not source or (not listed and (AZSMaxHit_ProcTotal("Pets") or 0) > 0) then
+			source = "Pets"
+		end
+	end
+	if not source then
+		return AZSMaxHit_LogName(ability, sentence)
+	end
+	-- A summon's attacks keep their grouped rows under its meter line: Infernal, then
+	-- Infernal: Melee and Hellfire (AZSMaxHit_GroupParent, AZSMaxHit_OwnerTakes).
+	-- One that casts a spell you also cast (Dread Lord, Searing Pain) is a proc under that spell.
+	-- A pet's swing can count for a talent or item (Bestial Wrath's splash): that is a proc's row.
+	local key = e.meterSourceKey or ""
+	local byItem = string.find(key, "^talent:") or string.find(key, "^amulet:")
+		or string.find(key, "^jewel:") or string.find(key, "^item:") or string.find(key, "^set:")
+	if source ~= "Pets" and not PROC_PARENT[source] and not byItem and (summon or SUMMONS[source]) then
+		local name = ability and AZSMaxHit_LogName(ability, sentence)
+		if name and string.lower(name) == string.lower(source) then
+			return source
+		end
+		-- Hellfire is only ever the Infernal's. A Succubus's Death Coil stays apart from your own.
+		if name == "Hellfire" then
+			return name
+		end
+		return source .. ": " .. (ability or "Melee")
+	end
+	-- The log's other names count as the spell's own (Deep Wound, Attack for Searing Totem).
+	local named = ability and AZSMaxHit_LogName(ability, sentence)
+	if named and string.lower(named) == string.lower(source) then
+		return source
+	end
+	local _, _, item = string.find(source, "^(.-): ")
+	local label = item or source
+	if source == "Pets" then
+		label = AZSMaxHit_PetsLabel()
+	end
+	if named and AZSMaxHit_SPLIT_PROC[source] then
+		return "@proc:" .. source .. "@" .. named, label, named
+	end
+	return "@proc:" .. source, label, named or "Pets"
+end
+
+function AZSMaxHit_PlaceFeedHit(book, e, at)
+	local key, label, extraOf = AZSMaxHit_FeedRow(e)
+	local r = book.spells[key]
+	if extraOf and not r then
+		r = { max = 0, extraOf = extraOf }
+		book.spells[key] = r
+	end
+	if r and label then
+		r.label = label
+	end
+	local _, _, splitProc = string.find(key, "^@proc:(.-)@")
+	if splitProc then
+		book.splitRows = book.splitRows or {}
+		book.splitRows[splitProc] = book.splitRows[splitProc] or {}
+		book.splitRows[splitProc][extraOf] = key
+		if not book.spells[extraOf] then
+			book.spells[extraOf] = { max = 0 }
+		end
+		-- A new rank is a new key in the meter's snapshot.
+		r.sourceKeys = r.sourceKeys or {}
+		if e.meterSourceKey then
+			r.sourceKeys[e.meterSourceKey] = true
+		end
+	end
+	-- A demon always sits under the spell it casts, which gets a row with dashes until you cast
+	-- it too, so the layout doesn't jump when you pick the spell (Dread Lord, Searing Pain).
+	local demon = extraOf and string.sub(key, 7)
+	if demon and SUMMONS[demon] and PROC_PARENT[demon] and not book.spells[PROC_PARENT[demon]] then
+		book.spells[PROC_PARENT[demon]] = { max = 0 }
+	end
+	-- Which spells this proc borrows. With just one it sits under that spell, which gets a row
+	-- of dashes until you learn it (Shadowy Apparitions, Mind Blast), so the layout doesn't jump.
+	-- Corpse Explosion is no spell you pick, so Shadowform stands alone. `procPlace` reads this.
+	-- A talent not known to belong to one spell may follow several (Shadow Weaving), and its
+	-- first hit can't tell: it stands alone from the start instead of moving out later.
+	local freeTalent = e.meterSourceKey and string.sub(e.meterSourceKey, 1, 7) == "talent:"
+		and not PROC_PARENT[string.sub(key, 7)]
+	if extraOf and extraOf ~= "Pets" and not freeTalent then
+		r.abilities = r.abilities or {}
+		if not r.abilities[extraOf] then
+			r.abilities[extraOf] = true
+			r.abilityCount = (r.abilityCount or 0) + 1
+			if r.abilityCount == 1 and extraOf ~= "Corpse Explosion" and not book.spells[extraOf] then
+				book.spells[extraOf] = { max = 0 }
+			end
+		end
+	end
+	local name = label or key
+	if e.icon and iconFor(name) == QUESTION then
+		rememberIcon(name, e.icon)
+	end
+	local amount = tonumber(e.amount)
+	local line = name .. (e.critical and " crits " or " hits ") .. tostring(e.targetName) .. " for " .. amount
+		.. " " .. (FEED_SCHOOL[e.schoolMask] or "Physical") .. " damage."
+	record(book, key, amount, e.critical and true or false, e.targetName, at, "COMBAT_TEXT_FEED", line)
+	local hw = windowsFor(ME)
+	local sw = hw.spells[key]
+	if not sw then
+		sw = newWindow()
+		hw.spells[key] = sw
+	end
+	local t = tonumber(e.presentedAt) or now()
+	recordBurst(book, key, pushWindow(sw, t, amount), at)
+	recordTotalBurst(book, pushWindow(hw.total, t, amount), at)
+	dirty = true
 end
 
 AZSMaxHit_feedCursor = nil
@@ -2713,6 +3133,11 @@ AZSMaxHit_feedCursor = nil
 function AZSMaxHit_ReadFeed()
 	if not AZS_GetCombatTextEvents then
 		return
+	end
+	-- The feed never answering shouldn't lose the log's hits.
+	local firstHeld = AZSMaxHit_heldLog[1]
+	if AZSMaxHit_feedMode == nil and firstHeld and now() - firstHeld.t > 5 then
+		AZSMaxHit_DecideFeed(false)
 	end
 	local page
 	for page = 1, 8 do
@@ -2729,17 +3154,41 @@ function AZSMaxHit_ReadFeed()
 		end
 		AZSMaxHit_feedCursor = r.cursor or AZSMaxHit_feedCursor
 		local events = r.events or {}
-		if table.getn(events) > 0 and AZSMaxHit_TakesPetHits() then
-			local hits = {}
-			local i
-			for i = 1, table.getn(events) do
-				local e = events[i]
-				if e.kind == "damage" and (e.sourceKind == "summon" or e.sourceKind == "pet")
-						and (tonumber(e.amount) or 0) > 0 then
-					table.insert(hits, e)
+		local i
+		for i = 1, table.getn(events) do
+			local e = events[i]
+			if e.kind == "damage" and (tonumber(e.amount) or 0) > 0 then
+				AZSMaxHit_NoteFeed(e)
+				table.insert(AZSMaxHit_heldFeed, e)
+				if AZSMaxHit_feedMode == nil then
+					if e.meterSource then
+						AZSMaxHit_DecideFeed(true)
+					else
+						AZSMaxHit_unnamedHits = AZSMaxHit_unnamedHits + 1
+						if AZSMaxHit_unnamedHits >= 10 then
+							AZSMaxHit_DecideFeed(false)
+						end
+					end
 				end
 			end
-			AZSMaxHit_PlacePetHits(run, hits, runTime())
+		end
+		if AZSMaxHit_feedMode ~= nil and table.getn(AZSMaxHit_heldFeed) > 0 then
+			local held = AZSMaxHit_heldFeed
+			AZSMaxHit_heldFeed = {}
+			local at = runTime()
+			if AZSMaxHit_feedMode then
+				for i = 1, table.getn(held) do
+					AZSMaxHit_PlaceFeedHit(run, held[i], at)
+				end
+			elseif AZSMaxHit_TakesPetHits() then
+				local hits = {}
+				for i = 1, table.getn(held) do
+					if held[i].sourceKind == "summon" or held[i].sourceKind == "pet" then
+						table.insert(hits, held[i])
+					end
+				end
+				AZSMaxHit_PlacePetHits(run, hits, at)
+			end
 		end
 		if not r.hasMore then
 			return
@@ -2787,6 +3236,40 @@ function AZSMaxHit_ReadSourceIcons()
 			dirty = true
 		end
 	end
+end
+
+-- The meter snapshot's total per source, for procs shared out by spell (AZSMaxHit_SplitShares).
+local nextSplitRead = 0
+
+function AZSMaxHit_ReadSplitTotals()
+	if not (run and run.splitRows) or not AZS_GetMeterContext or not AZS_GetMeterSnapshot or GetTime() < nextSplitRead then
+		return
+	end
+	nextSplitRead = GetTime() + 2
+	local ok, context = pcall(AZS_GetMeterContext)
+	if not ok or type(context) ~= "table" or not context.runId then
+		return
+	end
+	local snapshot
+	ok, snapshot = pcall(AZS_GetMeterSnapshot, {
+		apiVersion = 1, runId = context.runId, metric = "damage", scope = "self",
+		period = "run", groupBy = "source", windowSeconds = 0,
+	})
+	if not ok or type(snapshot) ~= "table" or type(snapshot.rows) ~= "table" then
+		return
+	end
+	local exact = {}
+	local i
+	for i = 1, table.getn(snapshot.rows) do
+		local row = snapshot.rows[i]
+		-- Only the proc's own row: a spell's casts can share the key at the same rank
+		-- (Stormstrike's hits and its Windfury are both ability:stormstrike:r<rank>).
+		if type(row) == "table" and row.sourceKey and row.nativeProc and tonumber(row.displayAmount) then
+			exact[row.sourceKey] = (exact[row.sourceKey] or 0) + tonumber(row.displayAmount)
+		end
+	end
+	AZSMaxHit_splitExact = exact
+	dirty = true
 end
 
 -- Total damage on the game's built-in meter, or nil if it can't be read.
@@ -2858,6 +3341,7 @@ function AZSMaxHit_GameMeterTotal()
 		AZSMaxHit_meterSum = runSum
 		AZSMaxHit_PlaceDirect(procs)
 		AZSMaxHit_ReadSourceIcons()
+		AZSMaxHit_ReadSplitTotals()
 	elseif not tonumber(total) then
 		return nil
 	end
@@ -2940,6 +3424,14 @@ SlashCmdList["AZSMAXHIT"] = function(msg)
 		else
 			say("window scale is " .. (db.scale or 1) .. ". Use /maxhit scale 0.6 to 1.5, for example /maxhit scale 0.8.")
 		end
+	elseif msg == "compact" then
+		AZSMaxHit_SetView("compact")
+		say(db.view == "compact" and "Compact on: Total, Hit, Crit and Burst only." or "Compact off.")
+		refresh()
+	elseif msg == "mini" then
+		AZSMaxHit_SetView("mini")
+		say(db.view == "mini" and "Mini on: Total only." or "Mini off.")
+		refresh()
 	elseif msg == "lock" then
 		db.locked = not db.locked
 		say(db.locked and "window locked." or "window unlocked.")
@@ -2996,14 +3488,18 @@ SlashCmdList["AZSMAXHIT"] = function(msg)
 		dumpParty()
 	elseif msg == "top" then
 		AZSMaxHit_DumpTop(currentBook(), say)
+	elseif msg == "feed" then
+		AZSMaxHit_DumpFeed(say)
 	elseif msg == "help" then
 		say("/maxhit - show or hide the window")
 		say("/maxhit reset - clear the numbers (they also clear by themselves at every new run)")
 		say("/maxhit lock - lock the window;  /maxhit icons - icons on/off;  /maxhit at - times of top hits on/off")
 		say("/maxhit scale 0.8 - make the whole window smaller or bigger (0.6 to 1.5)")
+		say("/maxhit compact - only Total, Hit, Crit and Burst, in a narrower window;  /maxhit mini - only Total (also the C and M buttons)")
 		say("/maxhit meter - list what the game's meter reports, and abilities still missing an icon")
 		say("/maxhit party - list what the game's party meter reports (co-op)")
 		say("/maxhit top - the game's exact message for each ability's biggest hits")
+		say("/maxhit feed - list which meter line the game credits each ability's hits to")
 		say("Hit / Crit: biggest normal hit and biggest crit (the larger is highlighted).")
 		say("At (if on): run time of the top hit.  Burst: most damage the ability did in any 1 second.")
 		say("Total: the ability's own damage from the game's meter (no procs, no overkill). Indented rows are its procs.")
