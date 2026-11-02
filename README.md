@@ -58,7 +58,9 @@ Download the `AZSMaxHit-<version>.zip` file from the [latest release](https://gi
 
 ## Game settings
 
-The addon reads the damage the game reports, so turn these on in **Options → Combat**:
+**On game 0.139 and later, there's nothing to set up.** The addon works even with the game's own damage numbers turned off.
+
+On older game versions, turn these on in **Options → Combat**:
 
 | Setting | Why |
 |---|---|
@@ -103,7 +105,7 @@ The addon reads the damage the game reports, so turn these on in **Options → C
 
 ## Good to know
 
-- **Empty window, or DoTs and pets missing?** Check the [game settings](#game-settings).
+- **Empty window, or DoTs and pets missing on an older game version?** Check the [game settings](#game-settings).
 - The addon reads the combat log, which is in **English**. A game set to another language may need its own patterns; open an issue if that's you.
 - **An ability's row includes its procs.** The combat log reports proc hits under the triggering spell's name (Shadowy Apparitions as Mind Blast, Pendant of the Plague ticks as Shadow Word: Pain), so an ability's Hit, Crit, Burst and Hits include them. That's why Hit can be higher than Crit: Mind Blast's biggest "hit" may really be a Shadow Weaving strike. Total doesn't include them: it comes from the game's meter, which keeps procs apart, and the indented rows show each proc's own total. Procs the addon can't place under an ability, like Shadow Weaving, get a grayed row of their own. The talent-to-spell list covers all nine classes and comes from the talent tooltips; if a proc that casts one spell still shows on its own row, please [open an issue](https://github.com/GhoulCompiler/AZSMaxHit/issues) with the output of `/maxhit meter`.
 - **Damage-over-time spells** (Shadow Word: Pain, Devouring Plague, Serpent Sting, Rend, ...) show only their own ticks. Other hits the game logs under their name, like Shadow Weaving strikes or Pendant of the Plague's explosion, are matched to the right proc row by watching which proc's total in the game's meter went up, so those procs get real Hit and Crit numbers. Hits that can't be matched show as **Other hits** under the spell. Spells that hit directly anyway, like Mind Blast, can't be split this way. The exception is Shadow Weaving, whose strikes have a fixed size per enemy: strikes logged under Mind Blast and other Shadow spells move to its row when they are bigger than that spell's biggest crit. Smaller ones stay in the spell's Avg and Hits, but sizes already seen on that enemy don't count as its Hit.

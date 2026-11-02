@@ -3507,7 +3507,7 @@ SlashCmdList["AZSMAXHIT"] = function(msg)
 		say("Overkill: damage past what enemies had left (combat log minus the game's meter).")
 		say("Click a column to sort by it. Mouse wheel scrolls.")
 		say("Co-op: a Party tab compares everyone, using the game's own party meter.")
-		say("Needs Options > Combat > Show Target Damage. Turn on Periodic Damage for DoTs and Pet Damage for pets.")
+		say("No game settings needed on game 0.139 and later. Before that: Options > Combat > Show Target Damage, Periodic Damage and Pet Damage.")
 	else
 		if frame:IsShown() then
 			frame:Hide()
