@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.2
+
+Tested with game 0.139.0, in game in Russian on Warlock and Shadow Priest.
+
+- Every language the game offers is now supported on game 0.139 and later. Rows show spell, demon and proc names in your game's language, using the game's own translations, and group the same way as in English. The window's own text, like column names, stays in English.
+- In co-op, names from a host playing in another language are understood too.
+- Older game versions still need the game set to English.
+
 ## 1.5.1
 
 Tested with game 0.139.0.

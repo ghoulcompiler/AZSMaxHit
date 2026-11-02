@@ -598,17 +598,23 @@ local LOG_NAME = {
 	["Inferno"] = "Infernal", -- the Infernal's landing, on the meter's Infernal line
 }
 
+-- UnitClass' first answer is in the game's language; the second never changes.
+function AZSMaxHit_ClassIs(class)
+	local _, token = UnitClass("player")
+	return token == class
+end
+
 function AZSMaxHit_LogName(spell, msg)
 	-- Searing Totem's bolts are logged as "Your Attack ... Fire damage".
 	if spell == "Attack" and msg and string.find(msg, " Fire damage", 1, true) then
 		return "Searing Totem"
 	end
 	-- A Priest's Penance bolts are logged as Holy Shock, a Paladin's own spell.
-	if spell == "Holy Shock" and UnitClass("player") == "Priest" then
+	if spell == "Holy Shock" and AZSMaxHit_ClassIs("PRIEST") then
 		return "Penance"
 	end
 	-- A Warlock's Imp is logged as "Your Fireball", a Mage's own spell. The meter says Imp.
-	if spell == "Fireball" and UnitClass("player") == "Warlock" then
+	if spell == "Fireball" and AZSMaxHit_ClassIs("WARLOCK") then
 		return "Imp"
 	end
 	return LOG_NAME[spell] or spell
@@ -783,7 +789,7 @@ end
 -- a strike, but small real hits can match by chance, so only sizes above both spells'
 -- biggest crits count: those are the ones that make Hit wrong.
 function AZSMaxHit_AfterDirectHit(book, spell, amount, crit, target, at, evt, msg)
-	if not target or string.sub(spell, 1, 6) == "@proc:" or UnitClass("player") ~= "Priest"
+	if not target or string.sub(spell, 1, 6) == "@proc:" or not AZSMaxHit_ClassIs("PRIEST")
 			or not string.find(msg, " Shadow damage", 1, true) then
 		return
 	end
@@ -1843,10 +1849,10 @@ function AZSMaxHit_PaintProc(row, item)
 	local dmg = item.dmg or (item.r and item.r.total) or 0
 	if item.child then
 		AZSMaxHit_Indent(row, 14)
-		row.name:SetText(item.label or item.name)
+		row.name:SetText(AZSMaxHit_Shown(item.label or item.name))
 	else
 		AZSMaxHit_Indent(row, 0)
-		row.name:SetText(item.label or item.name)
+		row.name:SetText(AZSMaxHit_Shown(item.label or item.name))
 	end
 	row.name:SetTextColor(0.72, 0.72, 0.72)
 	if db.showIcons then
@@ -2043,7 +2049,7 @@ local function refresh()
 			grand = grand + (r.total or 0)
 		end
 		if not top or (r.max or 0) > (top.max or 0) then
-			topName, top = r.label or spell, r
+			topName, top = AZSMaxHit_Shown(r.label or spell), r
 		end
 	end
 	if top then
@@ -2079,7 +2085,7 @@ local function refresh()
 		elseif item then
 			r = item.r
 			AZSMaxHit_Indent(row, (item.extra or item.attached) and 14 or 0)
-			row.name:SetText(item.label or item.name)
+			row.name:SetText(AZSMaxHit_Shown(item.label or item.name))
 			if item.extra then
 				row.name:SetTextColor(0.72, 0.72, 0.72)
 			else
@@ -3008,6 +3014,217 @@ function AZSMaxHit_DecideFeed(useFeed)
 	end
 end
 
+-- In another language the feed's ability names stay English while meter lines are translated
+-- (Searing Pain -> Жгучая боль [ability:searing_pain:r1]). Each translated name is turned into
+-- its English one as it arrives, so the grouping below works as it does in English, and turned
+-- back only for display. AZSMaxHit_Names.lua holds the game's own names; a name it doesn't know
+-- (a newer game's spell, most items) is worked out from the hit's key instead. A party's names
+-- are in the host's language, so any language is read, while rows show the player's own.
+AZSMaxHit_toEnglish = {}
+AZSMaxHit_toShown = {}
+AZSMaxHit_lineIsProc = {}
+AZSMaxHit_shownNames = {}
+AZSMaxHit_englishNames = {}
+AZSMaxHit_fromAnyLanguage = {}
+AZSMaxHit_language = nil
+AZSMaxHit_translating = false
+AZSMaxHit_nextLanguageRead = 0
+
+-- What a demon's attack is called in the keys. demon:melee is shared, so the summon list tells those.
+AZSMaxHit_DEMON_ATTACK = {
+	felseeker = "Dread Lord", firebolt = "Imp", inferno = "Infernal", hellfire = "Infernal",
+	death_coil = "Succubus", shadow_bolt = "Doomguard",
+}
+AZSMaxHit_SUMMON_KEY = {
+	imp = "Imp", felhunter = "Felhunter", voidwalker = "Voidwalker", succubus = "Succubus",
+	felguard = "Felguard", infernal = "Infernal", doomguard = "Doomguard", dread_lord = "Dread Lord",
+	wolf = "Wolf", raptor = "Raptor", spirit_wolf = "Spirit Wolf", treant = "Treant",
+	water_elemental = "Water Elemental",
+}
+-- A talent's or item's key is mostly its English name in lower case. These aren't (game client).
+AZSMaxHit_PROC_KEY = {
+	shadowburn = "Shadow Cleave", art_of_war = "The Art of War", holy_nova_talent = "Radiance",
+	frenzy_hunter = "Frenzy", enh_flametongue_weapon = "Flametongue Weapon",
+	enh_frostbrand_weapon = "Frostbrand Weapon", fire_lord = "Choker of the Fire Lord",
+}
+do
+	local name
+	for name in pairs(PROC_PARENT) do
+		if not string.find(name, ": ", 1, true) then
+			local key = string.gsub(string.gsub(string.lower(name), "[^%w ]", ""), " ", "_")
+			AZSMaxHit_PROC_KEY[key] = AZSMaxHit_PROC_KEY[key] or name
+		end
+	end
+end
+
+do
+	local code, names, english, shown
+	for code, names in pairs(AZSMaxHit_NAMES or {}) do
+		for english, shown in pairs(names) do
+			AZSMaxHit_englishNames[english] = true
+			AZSMaxHit_fromAnyLanguage[shown] = AZSMaxHit_fromAnyLanguage[shown] or english
+		end
+	end
+	-- "Inferno" could be another language's word for something else: English names stay as they are.
+	for english in pairs(AZSMaxHit_englishNames) do
+		AZSMaxHit_fromAnyLanguage[english] = nil
+	end
+end
+
+-- A language can change during a run, which starts from its own names.
+function AZSMaxHit_UseLanguage(code)
+	AZSMaxHit_language = code
+	AZSMaxHit_translating = code ~= "en"
+	AZSMaxHit_toEnglish, AZSMaxHit_toShown, AZSMaxHit_lineIsProc = {}, {}, {}
+	AZSMaxHit_shownNames = (AZSMaxHit_NAMES and AZSMaxHit_NAMES[code]) or {}
+end
+
+-- A meter line's name for the rows.
+function AZSMaxHit_EnglishName(name)
+	return AZSMaxHit_toEnglish[name] or AZSMaxHit_fromAnyLanguage[name] or name
+end
+
+function AZSMaxHit_IsTranslating()
+	if GetTime() >= AZSMaxHit_nextLanguageRead then
+		AZSMaxHit_nextLanguageRead = GetTime() + 5
+		if AZS_GetMeterCapabilities then
+			local ok, caps = pcall(AZS_GetMeterCapabilities)
+			if ok and type(caps) == "table" and caps.languageCode
+					and caps.languageCode ~= AZSMaxHit_language then
+				AZSMaxHit_UseLanguage(caps.languageCode)
+			end
+		end
+	end
+	return AZSMaxHit_translating
+end
+
+function AZSMaxHit_SummonByName(name)
+	if not AZS_GetSummons then
+		return nil
+	end
+	local ok, list = pcall(AZS_GetSummons)
+	if ok and type(list) == "table" then
+		local i
+		for i = 1, table.getn(list) do
+			if list[i].name == name and list[i].key then
+				return AZSMaxHit_SUMMON_KEY[list[i].key]
+			end
+		end
+	end
+	return nil
+end
+
+-- A meter line's English name, learned from the hit's key, or nil if the key can't tell.
+function AZSMaxHit_EnglishFromKey(e)
+	local source = e.meterSource
+	local key = e.meterSourceKey or ""
+	if key == "melee" then
+		return (e.sourceKind == "summon" or e.sourceKind == "pet") and "Pets" or "Melee"
+	end
+	local _, _, kind, rest = string.find(key, "^(%a+):(.+)$")
+	if not kind then
+		return nil
+	end
+	rest = string.gsub(rest, ":r%d+.*$", "")
+	if kind == "demon" then
+		return AZSMaxHit_SummonByName(source) or AZSMaxHit_DEMON_ATTACK[rest]
+	elseif kind == "talent" then
+		return AZSMaxHit_PROC_KEY[string.gsub(rest, "^.-%.", "")]
+	elseif kind == "amulet" or kind == "jewel" then
+		return AZSMaxHit_PROC_KEY[rest]
+	elseif kind == "ability" and e.abilityName then
+		-- Mind Blast and Shadowy Apparitions share a key: only the spell's own line isn't a proc.
+		if AZSMaxHit_lineIsProc[source] then
+			return nil
+		end
+		local sentence = " " .. (FEED_SCHOOL[e.schoolMask] or "Physical") .. " damage."
+		local english = AZSMaxHit_LogName(e.abilityName, sentence)
+		-- A second line can't be the same spell's own row.
+		if AZSMaxHit_toShown[english] and AZSMaxHit_toShown[english] ~= source then
+			return nil
+		end
+		return english
+	end
+	return nil
+end
+
+-- The English name of a hit's meter line, if the names file or an earlier hit knows it.
+function AZSMaxHit_KnownSource(e)
+	local source = e.meterSource
+	if AZSMaxHit_englishNames[source] then
+		return source
+	end
+	if AZSMaxHit_toEnglish[source] then
+		return AZSMaxHit_toEnglish[source]
+	end
+	-- Two English names can share a translation: the hit's own spell settles it.
+	if e.abilityName then
+		local sentence = " " .. (FEED_SCHOOL[e.schoolMask] or "Physical") .. " damage."
+		local own = AZSMaxHit_LogName(e.abilityName, sentence)
+		if AZSMaxHit_shownNames[own] == source then
+			return own
+		end
+	end
+	return AZSMaxHit_fromAnyLanguage[source]
+end
+
+-- The hit's meter line, in English when that's known; otherwise as the game names it.
+function AZSMaxHit_EnglishSource(e)
+	local source = e.meterSource
+	if not source then
+		return nil
+	end
+	local translating = AZSMaxHit_IsTranslating()
+	local known = AZSMaxHit_KnownSource(e)
+	if known or not translating then
+		return known or source
+	end
+	local english = AZSMaxHit_EnglishFromKey(e)
+	-- With no meter line to say it isn't a proc, the hit goes on the spell's row, but the name
+	-- isn't learned: a proc taken for the spell it borrows would stay swapped with it.
+	if english and string.sub(e.meterSourceKey or "", 1, 8) == "ability:"
+			and AZSMaxHit_lineIsProc[source] == nil then
+		return english
+	end
+	if english then
+		AZSMaxHit_toEnglish[source] = english
+		AZSMaxHit_toShown[english] = source
+		return english
+	end
+	return source
+end
+
+-- A spell's first hit can come before its meter line, and only that line tells a spell from a
+-- proc sharing its key. It waits for the next meter reads; a line that never comes means no proc.
+function AZSMaxHit_WaitsForMeter(e)
+	local source = e.meterSource
+	if not source or not AZSMaxHit_IsTranslating() or AZSMaxHit_KnownSource(e)
+			or AZSMaxHit_lineIsProc[source] ~= nil then
+		return false
+	end
+	if string.sub(e.meterSourceKey or "", 1, 8) ~= "ability:" then
+		return false
+	end
+	return GetTime() - (tonumber(e.presentedAt) or 0) < 2
+end
+
+-- A row's name as the player reads it.
+function AZSMaxHit_Shown(name)
+	if not AZSMaxHit_translating then
+		return name
+	end
+	local shown = AZSMaxHit_shownNames[name] or AZSMaxHit_toShown[name]
+	if shown then
+		return shown
+	end
+	local _, _, owner, spell = string.find(name, "^(.-): (.+)$")
+	local ownerShown = owner and (AZSMaxHit_shownNames[owner] or AZSMaxHit_toShown[owner])
+	if ownerShown then
+		return ownerShown .. ": " .. (AZSMaxHit_shownNames[spell] or AZSMaxHit_toShown[spell] or spell)
+	end
+	return name
+end
+
 -- The row a hit goes on: its key, and for a meter line under another name its label and the
 -- ability it borrows. A summon's swing may name the summon while the meter only has Pets.
 function AZSMaxHit_FeedRow(e)
@@ -3064,6 +3281,7 @@ function AZSMaxHit_FeedRow(e)
 end
 
 function AZSMaxHit_PlaceFeedHit(book, e, at)
+	e.meterSource = AZSMaxHit_EnglishSource(e)
 	local key, label, extraOf = AZSMaxHit_FeedRow(e)
 	local r = book.spells[key]
 	if extraOf and not r then
@@ -3179,8 +3397,16 @@ function AZSMaxHit_ReadFeed()
 			AZSMaxHit_heldFeed = {}
 			local at = runTime()
 			if AZSMaxHit_feedMode then
+				-- Hits behind a waiting one wait too: Burst needs them in the order they landed.
+				local waiting = false
 				for i = 1, table.getn(held) do
-					AZSMaxHit_PlaceFeedHit(run, held[i], at)
+					waiting = waiting or AZSMaxHit_WaitsForMeter(held[i])
+					if waiting then
+						table.insert(AZSMaxHit_heldFeed, held[i])
+					else
+						local age = AZSMaxHit_translating and GetTime() - (tonumber(held[i].presentedAt) or GetTime()) or 0
+						AZSMaxHit_PlaceFeedHit(run, held[i], at - math.max(age, 0))
+					end
 				end
 			elseif AZSMaxHit_TakesPetHits() then
 				local hits = {}
@@ -3209,9 +3435,10 @@ function AZSMaxHit_ReadSourceIcons()
 	end
 	local missing = false
 	for name in pairs(AZSMaxHit_meterRaw or {}) do
+		local english = AZSMaxHit_EnglishName(name)
 		-- An item proc ("Item: Spell") shows the item's icon.
-		local _, _, item = string.find(name, "^(.-): .+$")
-		if iconFor(name) == QUESTION and (not item or iconFor(item) == QUESTION) then
+		local _, _, item = string.find(english, "^(.-): .+$")
+		if iconFor(english) == QUESTION and (not item or iconFor(item) == QUESTION) then
 			missing = true
 		end
 	end
@@ -3232,9 +3459,10 @@ function AZSMaxHit_ReadSourceIcons()
 		return
 	end
 	for _, s in pairs(snapshot.sources) do
-		if type(s) == "table" and s.name and not db.icons[s.name]
+		local english = type(s) == "table" and s.name and AZSMaxHit_EnglishName(s.name)
+		if english and not db.icons[english]
 				and type(s.icon) == "table" and s.icon.status == "ready" then
-			rememberIcon(s.name, s.icon.path)
+			rememberIcon(english, s.icon.path)
 			dirty = true
 		end
 	end
@@ -3285,6 +3513,7 @@ function AZSMaxHit_GameMeterTotal()
 	if not ok then
 		return nil
 	end
+	AZSMaxHit_IsTranslating()
 	local sum = 0
 	if type(list) == "table" then
 		local procs, procSum = {}, 0
@@ -3296,7 +3525,10 @@ function AZSMaxHit_GameMeterTotal()
 				sum = sum + (tonumber(line.dmg) or 0)
 				local isProc = line.proc == 1 or line.proc == "1" or line.proc == true
 				local raw, base, dmg = tonumber(line.dmg) or 0, nil, 0
+				-- The line in English once known; the baseline stays on the game's own name.
+				local name = line.name and AZSMaxHit_EnglishName(line.name)
 				if line.name and line.name ~= "" then
+					AZSMaxHit_lineIsProc[line.name] = isProc
 					-- This run's share of the line: the meter can carry over
 					-- the last run's numbers until it starts over.
 					base = procBase[line.name]
@@ -3310,22 +3542,22 @@ function AZSMaxHit_GameMeterTotal()
 					raws[line.name] = raw
 					runSum = runSum + dmg
 					if not isProc then
-						local key = string.lower(line.name)
+						local key = string.lower(name)
 						own[key] = (own[key] or 0) + dmg
 					end
 				end
-				if line.name and line.name ~= "" and (isProc or AZSMaxHit_MeterOnly(line.name)) then
+				if line.name and line.name ~= "" and (isProc or AZSMaxHit_MeterOnly(name)) then
 					if dmg > 0 then
-						table.insert(procs, { name = line.name, dmg = dmg, raw = raw })
+						table.insert(procs, { name = name, dmg = dmg, raw = raw })
 						procSum = procSum + dmg
 					elseif base then
 						-- Keep it listed (at 0) so the next reset still knows its baseline.
-						table.insert(procs, { name = line.name, dmg = 0, raw = raw })
+						table.insert(procs, { name = name, dmg = 0, raw = raw })
 					end
 				end
-				if line.name and line.icon and not db.icons[line.name] then
-					rememberIcon(line.name, line.icon)
-					if db.icons[line.name] then dirty = true end
+				if line.name and line.icon and not db.icons[name] then
+					rememberIcon(name, line.icon)
+					if db.icons[name] then dirty = true end
 				end
 			end
 		end
