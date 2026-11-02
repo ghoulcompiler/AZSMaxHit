@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.1
+
+Tested with game 0.139.0.
+
+- Compact and Mini now stay on between games. The window used to open at full width every time.
+- `/maxhit help` now says no game settings are needed on game 0.139 and later.
+
 ## 1.5.0
 
 Tested with game 0.139.0, in game on Shadow Priest, Warlock, Hunter and Enhancement Shaman.

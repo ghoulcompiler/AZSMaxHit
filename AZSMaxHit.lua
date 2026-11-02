@@ -2756,7 +2756,9 @@ local function loadDB()
 	-- No history: the window starts empty whenever the game loads. Saved data
 	-- holds only settings, the window position and icons found.
 	db.run = { players = {} }
-	db.best, db.alerts, db.alertChat, db.view = nil, nil, nil, nil -- left over from 1.1-1.5
+	db.best, db.alerts, db.alertChat = nil, nil, nil -- left over from 1.1-1.5
+	-- Before 1.5 this key held another setting, which would break the column check.
+	if db.view and not AZSMaxHit_VIEW_HIDE[db.view] then db.view = nil end
 	db.owners = db.owners or {}
 	if db.showIcons == nil then db.showIcons = true end
 	db.icons = db.icons or {}
