@@ -5,7 +5,7 @@
 [![Tested with game 0.139.0](https://img.shields.io/badge/tested%20with%20game-0.139.0-brightgreen)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-An addon for [Azeroth Survivors](https://wow.aethus.pl/) that shows each ability's **biggest hit**, **biggest crit**, **burst** and **total damage** for the current run.
+A Details-style damage breakdown for [Azeroth Survivors](https://wow.aethus.pl/) that shows each ability's **biggest hit**, **biggest crit**, **burst** and **total damage** for the current run, and every hero's **DPS** in co-op.
 
 Damage meters tell you which ability did the most damage overall. AZS Max Hit tells you how hard each ability actually hits: the single biggest number it put on an enemy, and the most damage it did in one second.
 
@@ -17,8 +17,9 @@ Damage meters tell you which ability did the most damage overall. AZS Max Hit te
 
 - **Summary at the top:** your top hit (with the ability and whether it crit), your best burst, your total damage this run, and your overkill: damage past what enemies had left.
 - **A row per ability** (spells, melee, pets and procs) with its total, biggest normal hit, biggest crit, run time of its top hit, burst, average hit, hit count and crit rate. Click a column header to sort by it.
-- **Pets and summons** get their own rows, e.g. `Water Elemental: Waterbolt`. A Hunter's pet, whose hits aren't in the combat log, gets its numbers from the game's combat text feed (game 0.138 or later).
-- **Procs under their ability:** item and talent procs (Pendant of the Plague, Shadowy Apparitions, Shadowform, ...) appear indented under the ability that triggers them, with their total from the game's meter. The game doesn't report single proc hits, so their other columns show a dim *-*.
+- **Pets and summons** get their own rows, and a summon's attacks stay grouped under it, e.g. `Infernal: Melee`. A Hunter's pet has its own numbers, with Bestial Wrath's splashes on a row of their own (game 0.138 or later).
+- **Exact proc numbers:** on game 0.139 and later, every proc gets its own hit, crit, burst, average and hits, so Shadow Weaving or Shadowy Apparitions no longer get mixed into Mind Blast.
+- **Procs under their ability:** item and talent procs (Pendant of the Plague, Shadowy Apparitions, Windfury Weapon, ...) appear indented under the ability that triggers them, and demons under the spell they cast, like the Dread Lord under Searing Pain. On older game versions, a proc often has only its total from the game's meter, and its other columns show a dim *-*.
 - **Party view in co-op:** a Party tab compares every hero side by side: top ability, its DPS, DPS, total and share, straight from the game's party meter. See [Co-op](#co-op).
 - **Fill bars** show at a glance which abilities do the most damage, colored by damage school (Shadow, Fire, Frost, ...).
 - **Icons** from your spellbook, talents, items and the game's own meter.
