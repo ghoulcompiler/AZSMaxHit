@@ -2,7 +2,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/GhoulCompiler/AZSMaxHit)](https://github.com/GhoulCompiler/AZSMaxHit/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/GhoulCompiler/AZSMaxHit/total)](https://github.com/GhoulCompiler/AZSMaxHit/releases)
-[![Tested with game 0.138.0](https://img.shields.io/badge/tested%20with%20game-0.138.0-brightgreen)](CHANGELOG.md)
+[![Tested with game 0.139.0](https://img.shields.io/badge/tested%20with%20game-0.139.0-brightgreen)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 An addon for [Azeroth Survivors](https://wow.aethus.pl/) that shows each ability's **biggest hit**, **biggest crit**, **burst** and **total damage** for the current run.
@@ -30,7 +30,7 @@ Damage meters tell you which ability did the most damage overall. AZS Max Hit te
 |---|---|
 | <img src="images/compact.png" alt="Compact view: only Total, Hit, Crit and Burst, with procs still grouped under their spell" width="420"> | <img src="images/mini.png" alt="Mini view: only Total, with the top hit and total above it" width="240"> |
 
-Pure Lua (`.toc` and `.lua` only): no DLLs or executables. Works in the browser and desktop editions. Tested with game version **0.138.0**.
+Pure Lua (`.toc` and `.lua` only): no DLLs or executables. Works in the browser and desktop editions. Tested with game version **0.139.0**.
 
 The addon raises the game's combat log range settings to 200, so hits on distant enemies are recorded. It changes nothing else in the game.
 

@@ -2,18 +2,16 @@
 
 ## 1.5.0
 
-- Exact numbers for every proc. On game 0.139 and later, the game says which damage meter line each hit counts toward, and the addon now uses that for all classes. Shadow Weaving, Shadowy Apparitions, Seal Fate, Nightfall, demons and item procs get their own true Hit, Crit, Burst, Avg, Hits and Crit%, and a spell's row only counts its own hits. Hit should no longer end up above Crit because of a proc.
+Tested with game 0.139.0, in game on Shadow Priest, Warlock, Hunter and Enhancement Shaman.
+
+- Exact numbers for procs, thanks to the game's new data. On game 0.139 and later, the game says which damage meter line each hit counts toward, and the addon now uses that for all classes. Shadow Weaving, Shadowy Apparitions, demons, pets and item procs get their own true Hit, Crit, Burst, Avg, Hits and Crit%, and a spell's row only counts its own hits. Hit should no longer end up above Crit because of a proc.
 - Grouping stays: procs sit under the ability they borrow, like Shadowy Apparitions under Mind Blast, and a demon under the spell it casts, like the Dread Lord under Searing Pain, each with its own numbers. That spell's row shows `-` until you cast it yourself, so nothing jumps when you learn it. A summon's attacks stay under it, like Infernal: Melee and Hellfire under Infernal. Shadowform stands alone, since Corpse Explosion isn't a spell you pick.
-- Shaman: Windfury Weapon has a row under each spell that triggers it, like Stormstrike and Rockbiter Weapon, each with its own numbers, because its hits differ a lot between them.
+- Shaman: Windfury Weapon has a row under each spell that triggers it, like Stormstrike and Rockbiter Weapon, each with its own numbers, because its hits differ a lot between them. Eye of the Tempest now sits under Chain Lightning, so its damage no longer counts twice.
+- Hunter: Bestial Wrath's splashes are on its own row, so a pet's Hit, Crit and Avg only count its bites.
+- New `/maxhit feed` command lists which meter line the game credits each ability's hits to.
 - Older game versions keep working the way they did.
 - New Compact and Mini views, with C and M buttons next to R. Compact, or `/maxhit compact`, leaves only Total, Hit, Crit and Burst, with no OVERKILL tile. Mini, or `/maxhit mini`, leaves only Total, with TOP HIT and TOTAL on top. Both narrow the window, and the Party tab keeps its full width.
 - The title bar has - and + buttons next to R that make the whole window smaller or bigger, in steps of 0.1. The window's top-right corner stays in place while you click. `/maxhit scale` still sets an exact size.
-
-## 1.4.1
-
-- Shaman: Eye of the Tempest now sits under Chain Lightning, the name its free casts have in the combat log, so its damage no longer counts twice.
-- Hunter: on game 0.139 and later, the game says which hits are Bestial Wrath's splashes, so they reach its row at any rank.
-- New `/maxhit feed` command lists which meter line the game credits each ability's hits to.
 
 ## 1.4.0
 
