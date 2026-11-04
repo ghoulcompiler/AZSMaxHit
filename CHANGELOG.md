@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.3
+
+Tested with game 0.140.0, in game on Shadow Priest, Hunter and Enhancement Shaman.
+
+- Numbers no longer reset when you switch away from the browser and come back during a run. The addon now goes by the game's id for the run, on games that have one.
+- The window now sorts by Total by default. If you already clicked a column header, your choice is kept.
+- Hunter: Kill Command has its own row with its own Hit, Crit and Burst, so its big hits no longer count as the pet's.
+- Shaman: the game now reports all of Windfury Weapon together, so its Total under each spell is shared out by how much it hit there. The two Totals are an estimate and still add up to the game's meter.
+- Updated for game 0.140's new names in every language, including Kill Command and the Tier 0.5 sets' damage lines.
+
 ## 1.5.2
 
 Tested with game 0.139.0, in game in Russian on Warlock and Shadow Priest.

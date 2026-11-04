@@ -35,7 +35,7 @@ local meterProcs = {}
 -- Each proc's meter total at the last reset. Only damage after that counts, so
 -- a reset (or a new run whose meter hasn't cleared yet) doesn't show old procs.
 local procBase = {}
-local sortKey = "best"
+local sortKey = "total"
 local offset = 0
 local dirty = true
 
@@ -137,6 +137,7 @@ local SUMMONS = {
 	["Felguard"] = true, ["Infernal"] = true, ["Inferno"] = true, ["Doomguard"] = true,
 	["Dread Lord"] = true, ["Pit Lord"] = true, ["Wolf"] = true, ["Raptor"] = true,
 	["Spirit Wolf"] = true, ["Treant"] = true, ["Water Elemental"] = true,
+	["Devilsaur Matriarch"] = true,
 }
 
 local function isMine(owner)
@@ -165,6 +166,7 @@ local QUESTION = ICON_DIR .. "INV_Misc_QuestionMark"
 local FALLBACK_ICONS = {
 	["Melee"] = ICON_DIR .. "INV_Sword_04",
 	["Damage Shield"] = ICON_DIR .. "Spell_Nature_Thorns",
+	["Kill Command"] = ICON_DIR .. "Ability_Hunter_BeastCall", -- a stand-in: the game names none for it, and the wolf's row has BeastTaming
 	["Imp"] = ICON_DIR .. "Spell_Shadow_SummonImp",
 	["Felhunter"] = ICON_DIR .. "Spell_Shadow_SummonFelHunter",
 	["Voidwalker"] = ICON_DIR .. "Spell_Shadow_SummonVoidWalker",
@@ -1029,7 +1031,10 @@ local PROC_PARENT = {
 	["Kill Shot"] = "Aimed Shot",
 	["Piercing Shots"] = "Auto Shot",
 	["Counterattack"] = "Explosive Trap",        -- "a free Explosive Trap"
-	["Wyvern Sting"] = "Explosive Trap",
+	["Wyvern Sting"] = "Immolation Trap",        -- "an Immolation Trap sets itself at your feet" (0.140)
+	["Wolf Bite"] = "Kill Command",              -- new meter names in 0.140's client; Kill Command's
+	["Raptor Strikes"] = "Kill Command",         -- tooltip: "The Wolf bites, the Raptor strikes three
+	["Crushing Bite"] = "Kill Command",          -- times, and the Devilsaur Matriarch delivers a crushing blow"
 	-- Paladin
 	["Divine Favor"] = "Holy Shock",
 	["Daybreak"] = "Holy Wrath",                 -- "a free Holy Wrath"
@@ -1049,6 +1054,7 @@ local PROC_PARENT = {
 	-- Shaman
 	["Elemental Mastery"] = "Chain Lightning",   -- "a second Chain Lightning"
 	["Maelstrom Weapon"] = "Chain Lightning",    -- "a free Chain Lightning"
+	["Thunderburst"] = "Stormstrike",            -- "Every Stormstrike causes Thunderburst" (0.140)
 	["Flametongue Weapon"] = "Fire Nova",        -- "casts a free Fire Nova"
 	-- The neck's Stormstrike can cast a free Chain Lightning, logged under that name. Under
 	-- Stormstrike, as the meter's name suggests, the row counted twice (owner's report, 0.138).
@@ -1058,6 +1064,7 @@ local PROC_PARENT = {
 	-- No Resonant Shocks: the game's meter lists the Shocks it casts under those Shocks (0.134).
 	-- Druid
 	["Omen of Clarity"] = "Starfire",            -- "a free Starfire"
+	["Seed of Life"] = "Tranquility",            -- "Every qualifying Tranquility healing cast plants Seed of Life" (0.140)
 	["Starfall"] = "Starfire",
 	["Enrage"] = "Swipe",                        -- "a free Swipe"
 	["Dire Bear Form"] = "Swipe",
@@ -1241,13 +1248,22 @@ function AZSMaxHit_SplitShares(p, book)
 	local shares = {}
 	local exactSum, feedSum, allExact = 0, 0, true
 	local ability, key
+	-- Since 0.140 every spell's Windfury has one key (talent:shaman.enh_windfury_weapon:r3), so
+	-- the snapshot's number is the whole line, not one spell's share: it would split evenly.
+	local rowsOfKey = {}
+	for ability, key in pairs(book.splitRows[p.name]) do
+		local counted
+		for counted in pairs((book.spells[key] or {}).sourceKeys or {}) do
+			rowsOfKey[counted] = (rowsOfKey[counted] or 0) + 1
+		end
+	end
 	for ability, key in pairs(book.splitRows[p.name]) do
 		local stats = book.spells[key] or {}
 		local exact = 0
 		local known = false
 		local sourceKey
 		for sourceKey in pairs(stats.sourceKeys or {}) do
-			if AZSMaxHit_splitExact[sourceKey] then
+			if AZSMaxHit_splitExact[sourceKey] and rowsOfKey[sourceKey] == 1 then
 				exact = exact + AZSMaxHit_splitExact[sourceKey]
 				known = true
 			end
@@ -2776,7 +2792,7 @@ local function loadDB()
 		end
 	end
 	run = runBook(ME)
-	sortKey = db.sort or "best"
+	sortKey = db.sort or "total"
 	resetWindows()
 end
 
@@ -3039,7 +3055,7 @@ AZSMaxHit_SUMMON_KEY = {
 	imp = "Imp", felhunter = "Felhunter", voidwalker = "Voidwalker", succubus = "Succubus",
 	felguard = "Felguard", infernal = "Infernal", doomguard = "Doomguard", dread_lord = "Dread Lord",
 	wolf = "Wolf", raptor = "Raptor", spirit_wolf = "Spirit Wolf", treant = "Treant",
-	water_elemental = "Water Elemental",
+	water_elemental = "Water Elemental", devilsaur_matriarch = "Devilsaur Matriarch",
 }
 -- A talent's or item's key is mostly its English name in lower case. These aren't (game client).
 AZSMaxHit_PROC_KEY = {
@@ -3234,6 +3250,14 @@ function AZSMaxHit_FeedRow(e)
 		ability = e.reflected and "Damage Shield" or "Melee"
 	end
 	local source = e.meterSource
+	-- A pet's strike can count for your own spell: Kill Command's bite is summon, melee ->
+	-- Kill Command [demon:wolf_bite]. It's that spell's row, even before the meter lists the line.
+	if summon and source and source ~= "Pets" and not SUMMONS[source] then
+		local _, _, attack = string.find(e.meterSourceKey or "", "^demon:(.+)$")
+		if attack and attack ~= "melee" then
+			return source
+		end
+	end
 	-- AZSMaxHit_LogName reads the school from the log's sentence (Attack in Fire is Searing Totem).
 	local sentence = " " .. (FEED_SCHOOL[e.schoolMask] or "Physical") .. " damage."
 	if summon then
@@ -3585,6 +3609,11 @@ function AZSMaxHit_GameMeterTotal()
 	return sum
 end
 
+-- The game's id for this run, which stays the same through pauses. Nil on older games.
+function AZSMaxHit_RunId()
+	return type(AZS_ZONE) == "table" and AZS_ZONE.run or nil
+end
+
 -- Redraw at most twice a second, and start a fresh run when a new one begins.
 local elapsedSum = 0
 local partnerTimer = 3
@@ -3614,9 +3643,16 @@ driver:SetScript("OnUpdate", function()
 		if meter and db.run.meter and meter + 1 < db.run.meter then
 			newRun = true
 		end
+		-- The clock and meter can step back with no new run, as after the browser hid the
+		-- game. When the game gives a run id, only that decides.
+		local id = AZSMaxHit_RunId()
+		if id and db.run.id then
+			newRun = id ~= db.run.id
+		end
 		if newRun then
 			resetRun(true)
 		end
+		if id then db.run.id = id end
 		if t then db.run.lastTime = t end
 		if lvl and lvl > 0 then db.run.level = lvl end
 		if meter then db.run.meter = meter end
